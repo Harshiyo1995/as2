@@ -1,0 +1,51 @@
+# Dependency directories
+node_modules/
+/dashboard/node_modules/
+
+# Build outputs
+/dist/
+/dashboard/dist/
+/dashboard/dist-ssr/
+*.tsbuildinfo
+
+# Application temporary data & storage
+/data_storage/*
+!/data_storage/.gitkeep
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Private keys, certificates, and sensitive credentials
+*.key
+*.key.pem
+*-private.key.pem
+*.private.key
+*.pem
+*.cer
+*.crt
+*.pfx
+*.p12
