@@ -1,6 +1,8 @@
-import { Controller, Post, Get, Req, Res, Headers, HttpStatus, Logger } from '@nestjs/common';
+import { Controller, Post, Get, Req, Res, Headers, HttpStatus, Logger, NotFoundException } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { As2Service } from './as2.service';
+import { TradingPartnerService } from '../database/trading-partner.service';
+import { TransactionService } from '../database/transaction.service';
 import { Readable } from 'stream';
 
 @Controller('as2')
@@ -15,7 +17,11 @@ export class As2Controller {
     rawMdnBody: string;
   }> = [];
 
-  constructor(private readonly as2Service: As2Service) { }
+  constructor(
+    private readonly as2Service: As2Service,
+    private readonly partnerService: TradingPartnerService,
+    private readonly transactionService: TransactionService
+  ) { }
 
   @Post('receive')
   async receiveAs2Payload(
@@ -25,24 +31,34 @@ export class As2Controller {
   ) {
     try {
       // Validate core AS2 identification headers
-      if (!headers['as2-from'] || !headers['as2-to']) {
-        this.logger.warn('⚠️ Received request missing AS2-From or AS2-To headers');
-        return res.status(HttpStatus.BAD_REQUEST).send('Missing mandatory AS2 headers');
+      if (!headers['as2-from'] || !headers['as2-to'] || !headers['message-id']) {
+        this.logger.warn('⚠️ Received request missing AS2-From, AS2-To, or Message-ID headers');
+        return res.status(HttpStatus.BAD_REQUEST).send('Missing mandatory AS2 headers: AS2-From, AS2-To, or Message-ID');
       }
+
+      const messageId = headers['message-id'];
 
       const as2ToHeader = headers['as2-to'];
       const as2FromHeader = headers['as2-from'];
-      const expectedIdentity = 'YOUR_COMPANY1';
 
       this.logger.log(`📥 Inbound AS2 connection handshake initialized [${as2FromHeader} ──► ${as2ToHeader}]`);
 
-      // PRODUCTION B2B ROUTING GUARD: Enforce explicit partner identity matching
-      if (as2ToHeader !== expectedIdentity) {
-        this.logger.error(`❌ B2B Routing Reject: Receiver ID mismatch. Expected: '${expectedIdentity}', Got: '${as2ToHeader}'`);
-        return res.status(HttpStatus.BAD_REQUEST).send('AS2 transmission routing failure: Unknown or mismatched recipient identifier.');
+      // DYNAMIC B2B ROUTING GUARD: Enforce explicit partner identity matching for receiver
+      const receiverCert = await this.partnerService.getSystemCertificateByAs2Id(as2ToHeader);
+      if (!receiverCert) {
+        this.logger.error(`❌ B2B Routing Reject: Unknown or unauthorized receiver AS2-To ID: '${as2ToHeader}'`);
+        return res.status(HttpStatus.BAD_REQUEST).send(`AS2 transmission routing failure: Unknown or mismatched recipient identifier '${as2ToHeader}'.`);
       }
 
-      this.logger.log(`✅ B2B Routing Match: Receiver identity matches gateway profile [${expectedIdentity}]`);
+      // DYNAMIC B2B ROUTING GUARD: Enforce explicit partner identity matching for sender
+      try {
+        await this.partnerService.getPartnerWithCertificate(as2FromHeader);
+      } catch (err) {
+        this.logger.error(`❌ B2B Routing Reject: Unknown sender AS2-From ID: '${as2FromHeader}'`);
+        return res.status(HttpStatus.BAD_REQUEST).send(`AS2 transmission routing failure: Unknown sender identifier '${as2FromHeader}'.`);
+      }
+
+      this.logger.log(`✅ B2B Routing Match: Identities verified. Receiver [${as2ToHeader}] and Sender [${as2FromHeader}] match gateway profile.`);
       this.logger.log(`🔄 Proceeding to cryptographic handshake and conversion pipeline...`);
 
       // Collect data directly from the network socket buffer array to prevent empty chunks
@@ -64,12 +80,36 @@ export class As2Controller {
         return res.status(HttpStatus.BAD_REQUEST).send('Empty AS2 payload received');
       }
 
+      // IDEMPOTENCY: Duplicate Message-ID detection
+      const existingTx = await this.transactionService.findByMessageId(messageId);
+      if (existingTx && existingTx.status === 'COMPLETED' && existingTx.raw_mdn_content) {
+         this.logger.warn(`⚠️ Duplicate Payload Detected for Message-ID: ${messageId}. Re-transmitting original MDN.`);
+         
+         // Extract the boundary from the raw MDN content to construct the proper Content-Type
+         const boundaryMatch = existingTx.raw_mdn_content.match(/----=_Part_[^\n\r]+/);
+         const boundary = boundaryMatch ? boundaryMatch[0].trim().replace('--', '') : `----=_Part_${Date.now()}`;
+         
+         res.setHeader('Content-Type', `multipart/report; report-type=disposition-notification; boundary="${boundary}"`);
+         return res.status(HttpStatus.OK).send(existingTx.raw_mdn_content);
+      }
+
       this.logger.log(`📦 Payload buffering complete: ${fullRawBodyBuffer.length} bytes cleanly extracted from socket.`);
 
-      // Cast the unified data buffer back into a clean processing stream
-      const processedStream = Readable.from(fullRawBodyBuffer);
+      // ASYNC MDN: Immediate socket release for background processing
+      if (headers['receipt-delivery-option']) {
+        this.logger.log(`🚀 Async MDN requested. Returning HTTP 200 early to free socket.`);
+        res.status(HttpStatus.OK).send();
+        
+        // Detach execution to the background
+        const processedStream = Readable.from(fullRawBodyBuffer);
+        this.as2Service.processInboundStream(processedStream, headers).catch(err => {
+          this.logger.error(`Background AS2 Processing Failed for Async delivery`, err.stack);
+        });
+        return;
+      }
 
-      // Execute application processing
+      // SYNC MDN: Wait for processing inline
+      const processedStream = Readable.from(fullRawBodyBuffer);
       const { syncMdn } = await this.as2Service.processInboundStream(processedStream, headers);
 
       this.logger.log(`🎉 Transaction completed successfully. Cryptographic key pairs verified, envelope detached, and ledger records updated.`);

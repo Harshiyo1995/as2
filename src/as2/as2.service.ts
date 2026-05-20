@@ -60,17 +60,41 @@ export class As2Service {
 
     let systemPrivateKeyPem: string;
     let systemCertPem: string;
+    let senderCertPem: string;
     try {
-      const systemCert = await this.partnerService.getSystemPrivateCertificate();
+      const systemCert = await this.partnerService.getSystemCertificateByAs2Id(as2To);
+      if (!systemCert) {
+        throw new Error(`Missing system private key for receiver ${as2To}`);
+      }
       systemPrivateKeyPem = systemCert.private_key_pem || systemCert.pem_data;
       systemCertPem = systemCert.pem_data;
+      this.cryptoService.checkCertificateExpiration(systemCertPem, as2To);
+
+      const senderPartner = await this.partnerService.getPartnerWithCertificate(as2From);
+      if (!senderPartner || !senderPartner.certificate) {
+        throw new Error(`Missing public certificate for sender ${as2From}`);
+      }
+      senderCertPem = senderPartner.certificate.pem_data;
+      this.cryptoService.checkCertificateExpiration(senderCertPem, as2From);
+
     } catch (e) {
-      this.logger.error(`Missing system private keys. Decryption aborted.`);
-      await this.transactionService.updateStatus(messageId, TransactionStatus.FAILED, 'Missing credentials');
-      throw new Error('System credentials missing for inline decryption processing');
+      this.logger.error(`Missing or expired credentials. Decryption aborted. Error: ${e.message}`);
+      await this.transactionService.updateStatus(messageId, TransactionStatus.FAILED, e.message);
+      
+      // Generate negative MDN for early credential failure (counts as decryption failure/untrusted)
+      const disposition = 'automatic-action/MDN-sent-automatically; processed/error: decryption-failed';
+      const negativeMdn = await this.mdnService.generateSyncMdn(messageId, as2From, as2To, 'unknown', disposition);
+      await this.transactionService.updateMdnStatus(messageId, MdnStatus.PROCESSED);
+      
+      if (receiptDeliveryOption) {
+        this.mdnService.dispatchAsyncMdn(receiptDeliveryOption, messageId, as2From, as2To, 'unknown', disposition).catch(err => this.logger.error('Failed to dispatch Async Negative MDN', err));
+        return { syncMdn: undefined };
+      }
+      return { syncMdn: negativeMdn };
     }
 
     const decryptStream = await this.cryptoService.createDecryptStream(systemPrivateKeyPem, systemCertPem);
+    const verifyStream = await this.cryptoService.createVerifyStream(senderCertPem);
     const decryptedWriteStream = this.storageService.createWriteStream(decryptedFilename);
     const hashStream = crypto.createHash('sha256');
 
@@ -86,6 +110,7 @@ export class As2Service {
             yield chunk;
           }
         },
+        verifyStream,
         decryptedWriteStream
       );
 
@@ -110,9 +135,40 @@ export class As2Service {
       });
 
     } catch (pipelineError) {
-      this.logger.error(`Decryption processing pipeline failure`, pipelineError);
+      this.logger.error(`Cryptographic processing pipeline failure: ${pipelineError.message}`);
       await this.transactionService.updateStatus(messageId, TransactionStatus.FAILED, pipelineError.message);
-      throw pipelineError;
+
+      let disposition = 'processed/error: unknown';
+      if (pipelineError.message.includes('integrity-check-failed')) {
+        disposition = 'automatic-action/MDN-sent-automatically; processed/error: integrity-check-failed';
+      } else {
+        disposition = 'automatic-action/MDN-sent-automatically; processed/error: decryption-failed';
+      }
+
+      // Generate Negative MDN instead of throwing HTTP 500
+      const negativeMdn = await this.mdnService.generateSyncMdn(messageId, as2From, as2To, computedMic || 'unknown', disposition);
+      await this.transactionService.updateMdnStatus(messageId, MdnStatus.PROCESSED);
+      
+      const transactionRepository = this.transactionService['transactionRepository'];
+      await transactionRepository.update(
+        { message_id: messageId },
+        {
+          raw_mdn_content: negativeMdn.body,
+          nrr_validated_at: new Date(),
+          error_details: pipelineError.message
+        }
+      );
+
+      // Await saving raw file to disk before responding, to preserve audit trail
+      await saveRawPromise;
+
+      if (receiptDeliveryOption) {
+        this.mdnService.dispatchAsyncMdn(receiptDeliveryOption, messageId, as2From, as2To, computedMic || 'unknown', disposition)
+          .catch(err => this.logger.error('Failed to dispatch Async Negative MDN', err));
+        return { syncMdn: undefined };
+      } else {
+        return { syncMdn: negativeMdn };
+      }
     }
 
     await saveRawPromise;

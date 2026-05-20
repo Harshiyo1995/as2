@@ -109,6 +109,53 @@ class ForgeSignTransform extends Transform {
 }
 
 /**
+ * A Transform stream that buffers all input, then verifies PKCS7 signature.
+ */
+class ForgeVerifyTransform extends Transform {
+  private chunks: Buffer[] = [];
+  constructor(
+    private readonly senderCertPem: string,
+    private readonly logger: Logger,
+  ) { super(); }
+
+  _transform(chunk: Buffer, _enc: string, cb: Function) { this.chunks.push(chunk); cb(); }
+
+  _flush(cb: Function) {
+    try {
+      const raw = Buffer.concat(this.chunks);
+      const binaryString = raw.toString('binary');
+      const forgeBuffer = forge.util.createBuffer(binaryString);
+      const asn1Obj = forge.asn1.fromDer(forgeBuffer);
+      const msg = forge.pkcs7.messageFromAsn1(asn1Obj);
+
+      // Create a trust store containing only the exact sender certificate
+      const certStore = forge.pki.createCaStore([this.senderCertPem]);
+      
+      // Verification performs mathematical signature checks and validates against the trust store
+      // Note: Node-forge verify requires the message content to be present.
+      const verified = msg.verify(certStore);
+      if (!verified) {
+        throw new Error('integrity-check-failed: Signature verification failed mathematically or certificate mismatch.');
+      }
+
+      if (!msg.content) {
+        throw new Error('integrity-check-failed: Verified payload produced empty content');
+      }
+
+      const verifiedContent = Buffer.from(forge.util.bytesToHex(msg.content.getBytes()), 'hex');
+      this.logger.debug(`Signature verification success. Plaintext size: ${verifiedContent.length} bytes`);
+      
+      this.push(verifiedContent);
+      cb();
+    } catch (err) {
+      this.logger.error(`ForgeVerifyTransform failed: ${err.message}`);
+      cb(new Error(`integrity-check-failed: ${err.message}`));
+    }
+  }
+}
+
+
+/**
  * A Transform stream that buffers, then encrypts with node-forge.
  */
 class ForgeEncryptTransform extends Transform {
@@ -162,6 +209,13 @@ export class CryptoService {
   }
 
   /**
+   * S/MIME Signature Verification via node-forge (For Inbound).
+   */
+  async createVerifyStream(senderCertPem: string): Promise<Transform> {
+    return new ForgeVerifyTransform(senderCertPem, this.logger);
+  }
+
+  /**
    * S/MIME Encryption via node-forge (For Outbound).
    */
   async createEncryptStream(receiverCertPem: string): Promise<Transform> {
@@ -186,6 +240,20 @@ export class CryptoService {
     } catch (e) {
       this.logger.error(`Failed to load certificate for ${as2Id}`, e);
       throw e;
+    }
+  }
+
+  /**
+   * Strictly validates if a certificate is mathematically valid right now based on timestamps.
+   */
+  checkCertificateExpiration(certPem: string, as2Id: string): void {
+    const cert = forge.pki.certificateFromPem(certPem);
+    const now = new Date();
+    if (now < cert.validity.notBefore) {
+      throw new Error(`Certificate for ${as2Id} is not yet valid. Becomes valid at ${cert.validity.notBefore}`);
+    }
+    if (now > cert.validity.notAfter) {
+      throw new Error(`Certificate for ${as2Id} has expired. Expired at ${cert.validity.notAfter}`);
     }
   }
 }

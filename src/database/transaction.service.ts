@@ -13,6 +13,15 @@ export class TransactionService {
   ) { }
 
   /**
+   * Retrieves a transaction strictly by its core Message-ID
+   */
+  async findByMessageId(messageId: string): Promise<Transaction | null> {
+    return await this.transactionRepository.findOne({
+      where: { message_id: messageId }
+    });
+  }
+
+  /**
    * Creates a new transaction record for an incoming or outgoing AS2 message.
    */
   async createTransaction(data: Partial<Transaction>): Promise<Transaction> {

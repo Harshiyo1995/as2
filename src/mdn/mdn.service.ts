@@ -68,13 +68,14 @@ Received-Content-MIC: ${mic}
     messageId: string,
     senderAs2Id: string,
     receiverAs2Id: string,
-    mic: string
+    mic: string,
+    disposition: string = 'processed'
   ): Promise<void> {
     this.logger.log(`Dispatching Async MDN to ${url} for Message-ID: ${messageId}`);
 
     try {
       // 1. Generate a fully compliant AS2 multipart structure using your unchanged synchronous generator
-      const mdn = await this.generateSyncMdn(messageId, senderAs2Id, receiverAs2Id, mic);
+      const mdn = await this.generateSyncMdn(messageId, senderAs2Id, receiverAs2Id, mic, disposition);
 
       // 2. Fire a live HTTP POST network payload to deliver the receipt to the target URL callback
       const response = await fetch(url, {
