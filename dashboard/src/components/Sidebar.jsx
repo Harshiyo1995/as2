@@ -1,5 +1,16 @@
 import React from 'react';
-import { LayoutDashboard, Waypoints, FileCode2, Users, Shield, FileText, Activity, Settings, User } from 'lucide-react';
+import { 
+  LayoutDashboard, 
+  Waypoints, 
+  FileCode2, 
+  Users, 
+  Shield, 
+  FileText, 
+  Activity, 
+  Settings, 
+  User,
+  IdCard // Added for the Profile identity icon
+} from 'lucide-react';
 
 const Sidebar = ({ activeMainTab, setActiveMainTab }) => {
   return (
@@ -8,6 +19,10 @@ const Sidebar = ({ activeMainTab, setActiveMainTab }) => {
 
       <nav className="nav-menu">
         <NavItem id="dashboard" icon={<LayoutDashboard size={20} />} label="Dashboard" active={activeMainTab} set={setActiveMainTab} />
+        
+        {/* ─── NEW PROFILE TAB ─── */}
+        <NavItem id="profile" icon={<IdCard size={20} />} label="Profile" active={activeMainTab} set={setActiveMainTab} />
+        
         <NavItem id="flows" icon={<Waypoints size={20} />} label="Flows" active={activeMainTab} set={setActiveMainTab} />
         <NavItem id="partners" icon={<Users size={20} />} label="Partners" active={activeMainTab} set={setActiveMainTab} />
         <NavItem id="certificates" icon={<Shield size={20} />} label="Certs" active={activeMainTab} set={setActiveMainTab} />

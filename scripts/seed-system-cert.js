@@ -6,6 +6,9 @@ const fs = require('fs');
 const path = require('path');
 const { Client } = require('pg');
 
+// ─── CONFIGURE YOUR GATEWAY'S LOCAL AS2 IDENTITY HERE ───
+const TARGET_AS2_ID = 'YOUR_COMPANY1'; 
+
 // Read the generated PEM files
 const certPath = path.join(__dirname, '..', 'system-cert.pem');
 const keyPath = path.join(__dirname, '..', 'system-private.key.pem');
@@ -44,32 +47,32 @@ async function seedCert() {
     `);
     console.log('Schema migration: private_key_pem column ensured.');
 
-    // Remove old system cert if exists
-    await client.query(`DELETE FROM certificates WHERE alias = 'system-gateway-cert'`);
+    // Remove old system cert if exists to prevent conflicts
+    await client.query(`DELETE FROM certificates WHERE alias = $1`, [TARGET_AS2_ID]);
 
-    // Insert the system private certificate
+    // Insert the system private certificate using the exact AS2 ID as the alias
     const result = await client.query(`
       INSERT INTO certificates (
         alias, thumbprint, subject_dn, issuer_dn, serial_number,
         is_private, pem_data, private_key_pem, valid_from, valid_to, created_at
       ) VALUES (
-        'system-gateway-cert',
+        $1,
         'test-thumbprint-' || md5(random()::text),
         'CN=AS2 Gateway, O=My Company, C=US',
         'CN=AS2 Gateway, O=My Company, C=US',
         '01',
         true,
-        $1,
         $2,
         $3,
         $4,
+        $5,
         NOW()
       ) RETURNING id, alias;
-    `, [certPem, keyPem, now.toISOString(), validTo.toISOString()]);
+    `, [TARGET_AS2_ID, certPem, keyPem, now.toISOString(), validTo.toISOString()]);
 
-    console.log('✅ System certificate inserted successfully!');
+    console.log(`✅ System private certificate inserted successfully!`);
     console.log(`   ID:    ${result.rows[0].id}`);
-    console.log(`   Alias: ${result.rows[0].alias}`);
+    console.log(`   Alias: ${result.rows[0].alias} (Matches AS2-To header)`);
     console.log('');
     console.log('Your AS2 Gateway is now configured with a private key for decryption.');
     console.log('Restart your NestJS server and try sending a test payload!');

@@ -16,24 +16,52 @@ export class TradingPartnerService {
   ) {}
 
   /**
-   * Strict Multi-Tenant Private Key Registry Lookup
-   * STRICT ENFORCEMENT: Finds a private certificate explicitly owned by this local receiver AS2 ID.
-   * If no explicit key exists for this exact tenant, it returns null to trigger an immediate routing rejection.
+   * Dynamically modifies an existing trading partner connection profile row state safely handling UUID vs String IDs
    */
-  async getSystemCertificateByAs2Id(as2Id: string): Promise<Certificate | null> {
-    // Zero-Trust Lookup: Only return a key if it belongs explicitly to this tenant identity
+  async updatePartnerSettings(id: string, updateData: any): Promise<any> {
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const isUuid = uuidRegex.test(id);
+
+    let partner;
+    if (isUuid) {
+      partner = await this.partnerRepository.findOne({ 
+        where: [ { id: id as any }, { as2_id: id } ],
+        relations: ['certificate']
+      });
+    } else {
+      partner = await this.partnerRepository.findOne({ 
+        where: { as2_id: id },
+        relations: ['certificate']
+      });
+    }
+
+    if (!partner) return null;
+
+    partner.as2_id = updateData.as2_id ?? partner.as2_id;
+    partner.url = updateData.url ?? partner.url;
+    partner.sign_outbound = updateData.sign_outbound ?? partner.sign_outbound;
+    partner.encrypt_outbound = updateData.encrypt_outbound ?? partner.encrypt_outbound;
+    partner.encryption_algorithm = updateData.encryption_algorithm ?? partner.encryption_algorithm;
+    partner.request_mdn = updateData.request_mdn ?? partner.request_mdn;
+    partner.mdn_delivery_mode = updateData.mdn_delivery_mode ?? partner.mdn_delivery_mode;
+
+    return await this.partnerRepository.save(partner);
+  }
+
+  /**
+   * Strict Multi-Tenant Private Key Registry Lookup
+   */
+  async getSystemCertificateByAs2Id(as2Id: string) {
     const cert = await this.certRepository.findOne({
       where: [
-        { is_private: true, alias: as2Id },
-        { is_private: true, alias: `${as2Id}-private-cert` }
-      ]
+        { alias: as2Id, is_private: true },
+        { alias: `${as2Id}_local_station`, is_private: true }
+      ],
     });
 
     if (!cert) {
       this.logger.error(`❌ Security Isolation Violation: No explicit private key registered for local tenant profile: '${as2Id}'`);
-      return null; 
     }
-
     return cert;
   }
 
@@ -61,7 +89,6 @@ export class TradingPartnerService {
 
   /**
    * Fetches the system's own private certificate used for decryption/signing.
-   * Typically identified by alias or a specific configuration flag.
    */
   async getSystemPrivateCertificate(): Promise<Certificate> {
     const cert = await this.certRepository.findOne({
@@ -85,22 +112,18 @@ export class TradingPartnerService {
     if (data.certificate_pem) {
       try {
         const forge = require('node-forge');
-        // Parse the PEM
         const certObj = forge.pki.certificateFromPem(data.certificate_pem);
         
-        // Extract attributes
         const subjectDn = certObj.subject.attributes.map(a => `${a.shortName || a.name}=${a.value}`).join(', ');
         const issuerDn = certObj.issuer.attributes.map(a => `${a.shortName || a.name}=${a.value}`).join(', ');
         const validFrom = certObj.validity.notBefore;
         const validTo = certObj.validity.notAfter;
         const serialNumber = certObj.serialNumber;
         
-        // Alignment Passage: SHA-1 hashing configuration
         const md = forge.md.sha1.create();
         md.update(forge.asn1.toDer(forge.pki.certificateToAsn1(certObj)).getBytes());
         const thumbprint = md.digest().toHex();
 
-        // Create DB Record
         const newCert = this.certRepository.create({
           alias: `${data.as2_id}-public-cert`,
           thumbprint: thumbprint,
@@ -121,7 +144,6 @@ export class TradingPartnerService {
       }
     }
 
-    // Create Trading Partner
     const partner = this.partnerRepository.create({
       name: data.name,
       as2_id: data.as2_id,

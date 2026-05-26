@@ -32,12 +32,9 @@ export class As2Service {
 
     this.logger.log(`Processing conversion pipeline for message: ${messageId} (${as2From} -> ${as2To})`);
 
-    // ─── CRITICAL FIX: SANITIZE FILENAME FOR WINDOWS COMPATIBILITY ───────────
     const safeMessageId = messageId.replace(/[<>:"/\\|?*]/g, '_');
-
     const rawFilename = `${safeMessageId}.raw.enc`;
     const decryptedFilename = `${safeMessageId}.decrypted.xml`;
-    // ───────────────────────────────────────────────────────────────────────────
 
     await this.transactionService.createTransaction({
       message_id: messageId,
@@ -81,7 +78,6 @@ export class As2Service {
       this.logger.error(`Missing or expired credentials. Decryption aborted. Error: ${e.message}`);
       await this.transactionService.updateStatus(messageId, TransactionStatus.FAILED, e.message);
       
-      // Generate negative MDN for early credential failure (counts as decryption failure/untrusted)
       const disposition = 'automatic-action/MDN-sent-automatically; processed/error: decryption-failed';
       const negativeMdn = await this.mdnService.generateSyncMdn(messageId, as2From, as2To, 'unknown', disposition);
       await this.transactionService.updateMdnStatus(messageId, MdnStatus.PROCESSED);
@@ -94,41 +90,41 @@ export class As2Service {
     }
 
     const decryptStream = await this.cryptoService.createDecryptStream(systemPrivateKeyPem, systemCertPem);
-    const verifyStream = await this.cryptoService.createVerifyStream(senderCertPem);
+    const verifyStream = (await this.cryptoService.createVerifyStream()) as any; 
     const decryptedWriteStream = this.storageService.createWriteStream(decryptedFilename);
-    const hashStream = crypto.createHash('sha256');
-
+    
     let computedMic = '';
 
     try {
+      // ─── THE PIPELINE FIX ───
+      // We pass the stream through VerifyStream so it can strip the signature away,
+      // allowing us to calculate the hash strictly on the pure XML bytes!
       await pipeline(
         cryptoFork,
         decryptStream,
-        async function* (source) {
-          for await (const chunk of source) {
-            hashStream.update(chunk);
-            yield chunk;
-          }
-        },
-        verifyStream,
+        verifyStream, 
         decryptedWriteStream
       );
 
+      // ─── THE FINAL MIC FIX ───
+      const hashStream = crypto.createHash('sha256');
+      if (verifyStream.micContent) {
+         hashStream.update(verifyStream.micContent);
+      } else {
+         this.logger.warn("VerifyStream did not expose micContent.");
+      }
+      
       const micDigest = hashStream.digest('base64');
       computedMic = `${micDigest}, sha256`;
-      this.logger.log(`Decryption complete. Generated Plaintext MIC: ${computedMic}`);
+      this.logger.log(`Decryption complete. Generated Canonicalized MIC: ${computedMic}`);
 
       await this.transactionService.updateStatus(messageId, TransactionStatus.COMPLETED);
 
       const absoluteDecryptedPath = `${this.storageService['storageBasePath']}/${decryptedFilename}`;
 
-      // ─── RESTORED: PRIMARY BUSINESS VALUE OVERWRITE HOOK ──────────────────
-      // Reads the XML content to capture the core business tracking number 
-      // and swaps it with the transport-level header key wrapper.
       await this.fdaParserService.processInboundBasePayload(absoluteDecryptedPath, messageId).catch(err => {
         this.logger.error(`Primary safety document business ID re-keying failed`, err);
       });
-      // ───────────────────────────────────────────────────────────────────────
 
       this.fdaParserService.processAck(absoluteDecryptedPath, messageId).catch(err => {
         this.logger.error(`FDA Acknowledgement extraction pass failed`, err);
@@ -145,7 +141,6 @@ export class As2Service {
         disposition = 'automatic-action/MDN-sent-automatically; processed/error: decryption-failed';
       }
 
-      // Generate Negative MDN instead of throwing HTTP 500
       const negativeMdn = await this.mdnService.generateSyncMdn(messageId, as2From, as2To, computedMic || 'unknown', disposition);
       await this.transactionService.updateMdnStatus(messageId, MdnStatus.PROCESSED);
       
@@ -159,7 +154,6 @@ export class As2Service {
         }
       );
 
-      // Await saving raw file to disk before responding, to preserve audit trail
       await saveRawPromise;
 
       if (receiptDeliveryOption) {
@@ -187,16 +181,13 @@ export class As2Service {
       } else {
         syncMdnResponse = await this.mdnService.generateSyncMdn(messageId, as2From, as2To, computedMic);
 
-        // Dynamic lookup queries the active row state to handle mid-flight ID shifts smoothly
         try {
           const transactionRepository = this.transactionService['transactionRepository'];
           const activeRecord = await transactionRepository.findOne({ where: { raw_file_path: rawFilename } });
           const activeMessageId = activeRecord ? activeRecord.message_id : messageId;
 
-          // Updates your operational status column using the correct database key context
           await this.transactionService.updateMdnStatus(activeMessageId, MdnStatus.PROCESSED);
 
-          // Saves the remaining compliance evidence metrics fields alongside it
           await transactionRepository.createQueryBuilder()
             .update()
             .set({

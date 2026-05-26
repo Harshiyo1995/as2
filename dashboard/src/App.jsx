@@ -7,6 +7,7 @@ import TransactionLedger from './components/TransactionLedger';
 import VeevaTestPanel from './components/VeevaTestPanel';
 import PartnerDirectory from './components/PartnerDirectory';
 import SettingsPage from './components/SettingsPage';
+import ProfilePage from './components/ProfilePage';
 import 'reactflow/dist/style.css';
 
 function App() {
@@ -25,6 +26,7 @@ function App() {
         {activeMainTab === 'certificates' && <CertificateGrid />}
         {activeMainTab === 'activity' && <VeevaTestPanel />}
         {activeMainTab === 'settings' && <SettingsPage />}
+        {activeMainTab === 'profile' && <ProfilePage />}
       </main>
     </div>
   );

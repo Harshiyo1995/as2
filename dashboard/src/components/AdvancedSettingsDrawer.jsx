@@ -1,253 +1,821 @@
-import React, { useState, useEffect } from 'react';
-import { Settings, RefreshCw, AlertCircle, Cpu, LogIn, LogOut, Code, Download, FileText, CheckCircle2, ArrowUpRight, Search, ShieldCheck } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+  Settings, RefreshCw, AlertCircle, Cpu, LogIn, LogOut, Code, 
+  Download, FileText, Search, Save, Trash2, Send, ChevronDown, 
+  ChevronRight, X, Upload
+} from 'lucide-react';
 
 const AdvancedSettingsDrawer = ({ partner, onClose }) => {
   const [activeTab, setActiveTab] = useState('settings');
-  const [searchTerm, setSearchTerm] = useState('');
-  const [dbPartners, setDbPartners] = useState([]);
+  const [dbCerts, setDbCerts] = useState([]);
   const [loadingCerts, setLoadingCerts] = useState(true);
 
-  // Fetch live partner certificate profiles to seed the dropdown selector dynamically
+  // --- Input Tab Functional State ---
+  const [expandedRow, setExpandedRow] = useState(null);
+  const [innerTab, setInnerTab] = useState('details'); 
+  const [transactionLogs, setTransactionLogs] = useState([]);
+  const [selectedRows, setSelectedRows] = useState([]); 
+  
+  // Modal & Dropdown State
+  const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+  const [stagedFile, setStagedFile] = useState(null);
+  const [isSending, setIsSending] = useState(false);
+  const fileInputRef = useRef(null);
+
+  // ─── ALIGNED FORM STATE ───
+  const [formData, setFormData] = useState({
+    as2_id: '',
+    url: '',
+    sign_outbound: true,
+    encrypt_outbound: true,
+    require_signature: true,
+    require_encryption: true,
+    compress_outbound: false,
+    connection_timeout: 60,
+    encryption_algorithm: '3DES',
+    signature_algorithm: 'SHA-256',
+    request_mdn: true,
+    mdn_security: 'SIGNED',
+    mdn_delivery_mode: 'SYNC',
+    certificate_id: '', 
+    as2_reliability: false,
+    as2_reliability_interval: 30,
+    alternate_local_as2_id: '',
+    alternate_private_cert_id: '',
+    alternate_private_cert_password: '',
+    tls_use_profile_settings: true,
+    tls_private_cert_id: '',
+    tls_private_cert_password: '',
+    http_auth_enabled: false,
+    http_auth_type: 'BASIC',
+    http_auth_user: '',
+    http_auth_password: '',
+    tls_protocols: { SSLv2: false, SSLv3: false, TLSv1_0: false, TLSv1_1: true, TLSv1_2: true, TLSv1_3: false },
+    temp_receive_directory: '',
+    custom_http_headers: '',
+    use_global_proxy: true,
+    proxy_type: 'None',
+    proxy_host: '',
+    proxy_port: '',
+    proxy_user: '',
+    proxy_password: ''
+  });
+
+  // ─── THE HYDRATION FIX ───
+  // We now map EVERY single field from the DB payload into React state.
+  useEffect(() => {
+    if (partner) {
+      // Safely parse TLS string from DB into checkbox states
+      const savedTls = partner.tls_enabled_protocols || '';
+      const parsedTls = {
+        SSLv2: savedTls.includes('SSLv2'),
+        SSLv3: savedTls.includes('SSLv3'),
+        TLSv1_0: savedTls.includes('TLSv1_0') || savedTls.includes('TLSv1.0'),
+        TLSv1_1: savedTls.includes('TLSv1_1') || savedTls.includes('TLSv1.1'),
+        TLSv1_2: savedTls.includes('TLSv1_2') || savedTls.includes('TLSv1.2'),
+        TLSv1_3: savedTls.includes('TLSv1_3') || savedTls.includes('TLSv1.3')
+      };
+      const finalTls = savedTls ? parsedTls : { SSLv2: false, SSLv3: false, TLSv1_0: false, TLSv1_1: true, TLSv1_2: true, TLSv1_3: false };
+
+      setFormData(prev => ({
+        ...prev,
+        as2_id: partner.as2_id || '',
+        url: partner.url || '',
+        sign_outbound: partner.sign_outbound ?? true,
+        encrypt_outbound: partner.encrypt_outbound ?? true,
+        require_signature: partner.require_signature ?? true,
+        require_encryption: partner.require_encryption ?? true,
+        compress_outbound: partner.compress_outbound ?? false,
+        connection_timeout: partner.connection_timeout || 60,
+        encryption_algorithm: partner.encryption_algorithm || '3DES',
+        signature_algorithm: partner.signature_algorithm || 'SHA-256',
+        request_mdn: partner.request_mdn ?? true,
+        mdn_security: partner.mdn_security || 'SIGNED',
+        mdn_delivery_mode: partner.mdn_delivery_mode || 'SYNC',
+        certificate_id: partner.certificate_id || '',
+        as2_reliability: partner.as2_reliability ?? false,
+        as2_reliability_interval: partner.as2_reliability_interval || 30,
+        alternate_local_as2_id: partner.alternate_local_as2_id || '',
+        alternate_private_cert_id: partner.alternate_private_cert_id || '',
+        alternate_private_cert_password: partner.alternate_private_cert_password || '',
+        tls_use_profile_settings: partner.tls_use_profile_settings ?? true,
+        tls_private_cert_id: partner.tls_private_cert_id || '',
+        tls_private_cert_password: partner.tls_private_cert_password || '',
+        http_auth_enabled: partner.http_auth_enabled ?? false,
+        http_auth_type: partner.http_auth_type || 'BASIC',
+        http_auth_user: partner.http_auth_user || '',
+        http_auth_password: partner.http_auth_password || '',
+        tls_protocols: finalTls,
+        temp_receive_directory: partner.temp_receive_directory || '',
+        custom_http_headers: partner.custom_http_headers || '',
+        use_global_proxy: partner.use_global_proxy ?? true,
+        proxy_type: partner.proxy_type || 'None',
+        proxy_host: partner.proxy_host || '',
+        proxy_port: partner.proxy_port || '',
+        proxy_user: partner.proxy_user || '',
+        proxy_password: partner.proxy_password || ''
+      }));
+    }
+  }, [partner]);
+
   useEffect(() => {
     fetch('http://localhost:8080/api/partners')
       .then(res => res.json())
       .then(data => {
-        setDbPartners(data);
+        const certs = data.filter(p => p.certificate).map(p => p.certificate);
+        setDbCerts(certs);
         setLoadingCerts(false);
       })
       .catch(err => {
-        console.error("Failed to query certificate store", err);
+        console.error("Failed to fetch certificates", err);
         setLoadingCerts(false);
       });
   }, []);
 
+  const handleSaveChanges = async () => {
+    try {
+      const targetId = partner.id || partner.as2_id;
+      
+      // PostgreSQL Strict Cleanup: Convert empty strings to NULL for UUIDs/Numbers
+      const payload = {
+          ...formData,
+          tls_enabled_protocols: Object.keys(formData.tls_protocols).filter(k => formData.tls_protocols[k]).join(','),
+          certificate_id: formData.certificate_id || null,
+          alternate_private_cert_id: formData.alternate_private_cert_id || null,
+          tls_private_cert_id: formData.tls_private_cert_id || null,
+          proxy_port: formData.proxy_port ? parseInt(formData.proxy_port, 10) : null,
+          as2_reliability_interval: formData.as2_reliability_interval ? parseInt(formData.as2_reliability_interval, 10) : 30,
+          connection_timeout: formData.connection_timeout ? parseInt(formData.connection_timeout, 10) : 60,
+      };
+
+      const response = await fetch(`http://localhost:8080/as2/partners/${targetId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      
+      if (!response.ok) throw new Error('Failed to save configuration');
+      alert(`Settings Saved Successfully!`);
+    } catch (error) {
+      alert(`Error saving settings: ${error.message}`);
+    }
+  };
+
+  const handleTlsChange = (protocol) => {
+      setFormData(prev => ({
+          ...prev,
+          tls_protocols: { ...prev.tls_protocols, [protocol]: !prev.tls_protocols[protocol] }
+      }));
+  }
+
+  // ─── INPUT TAB LOGIC ───
+
+  const handleModalUploadSubmit = () => {
+    if (!stagedFile) return;
+    const newLog = {
+      id: Date.now(),
+      date: new Date().toLocaleString(),
+      status: 'Unsent (Attempts: 1)',
+      fileName: stagedFile.name,
+      fileSize: `${(stagedFile.size / 1024).toFixed(2)} KB`,
+      rawFile: stagedFile, 
+      msgId: '-',
+      processingTime: '-',
+      error: null
+    };
+    setTransactionLogs(prev => [newLog, ...prev]);
+    setIsUploadModalOpen(false);
+    setStagedFile(null);
+  };
+
+  const toggleRowSelection = (id) => {
+    setSelectedRows(prev => prev.includes(id) ? prev.filter(rowId => rowId !== id) : [...prev, id]);
+  };
+
+  const handleSelectAll = (e) => {
+    if (e.target.checked) {
+      setSelectedRows(transactionLogs.map(log => log.id));
+    } else {
+      setSelectedRows([]);
+    }
+  };
+
+  const handleDeleteSelected = () => {
+    setTransactionLogs(prev => prev.filter(log => !selectedRows.includes(log.id)));
+    setSelectedRows([]);
+  };
+
+  const handleSendSelected = async () => {
+    const filesToSend = transactionLogs.filter(log => selectedRows.includes(log.id) && log.rawFile);
+    if (filesToSend.length === 0) return;
+
+    setIsSending(true);
+
+    for (const log of filesToSend) {
+      const apiFormData = new FormData();
+      apiFormData.append('file', log.rawFile);
+      apiFormData.append('senderId', 'COMPANYUS'); 
+      apiFormData.append('receiverId', formData.as2_id);
+
+      try {
+        const response = await fetch('http://localhost:8080/as2/send', {
+          method: 'POST',
+          body: apiFormData,
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok) {
+          updateLog(log.id, { 
+            status: 'Success', 
+            msgId: result?.data?.messageId || 'Generated by Engine', 
+            processingTime: '1s 34ms', 
+            error: null 
+          });
+        } else {
+          updateLog(log.id, { 
+            status: 'Error', 
+            error: `HTTP protocol error. ${result.message || '503 Service Temporarily Unavailable.'}`
+          });
+        }
+      } catch (err) {
+        updateLog(log.id, { 
+          status: 'Error', 
+          error: `HTTP protocol error. 503 Service Temporarily Unavailable.`
+        });
+      }
+    }
+    setIsSending(false);
+    setSelectedRows([]); 
+  };
+
+  const updateLog = (id, updates) => {
+    setTransactionLogs(prev => prev.map(log => log.id === id ? { ...log, ...updates } : log));
+  };
+
   if (!partner) return null;
 
-  // Mock data definitions for tracking grids
-  const mockOutputFiles = [
-    { name: 'Success_E2B_ACK5(3new).txt', size: '5.37 KB', time: 'May 17, 2026 12:25:34', status: 'Success', duration: '931ms', msgId: 'GAAS_Async-20260515-162534034-A6pp' },
-    { name: 'TR-000303_EMA_E2BR3_20260515122229.xml', size: '12.4 KB', time: 'May 15, 2026 12:22:46', status: 'Success', duration: '1s 83ms', msgId: 'GAAS_Async-20260515-122246112-F9bb' }
-  ];
-
-  const mockInputFiles = [
-    { name: 'ICSR_SUBMISSION_BATCH_001.xml', size: '18.2 KB', date: 'May 17, 2026 13:45:12', queueStatus: 'Pending Send' }
-  ];
-
   return (
-    <div style={{
-      position: 'fixed', top: 0, right: 0, width: '580px', height: '100vh',
-      background: '#ffffff', borderLeft: '1px solid #e2e8f0', boxShadow: '-4px 0 24px rgba(15, 23, 42, 0.08)',
-      display: 'flex', zIndex: 9999, animation: 'slideIn 0.2s ease-out'
-    }}>
-
-      {/* LEFT NAVIGATION COLUMN SIDEBAR */}
-      <div style={{
-        width: '180px', background: '#f8fafc', borderRight: '1px solid #e2e8f0',
-        display: 'flex', flexDirection: 'column', padding: '16px 0'
-      }}>
-        <div style={{ padding: '0 16px 16px 16px', borderBottom: '1px solid #e2e8f0', marginBottom: '12px' }}>
-          <span style={{ fontSize: '11px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-            Connector Actions
-          </span>
+    <div style={{ position: 'fixed', top: 0, right: 0, width: '1100px', height: '100vh', background: '#f8fafc', borderLeft: '1px solid #e2e8f0', boxShadow: '-4px 0 24px rgba(15, 23, 42, 0.08)', display: 'flex', zIndex: 9999 }}>
+      
+      {/* Upload Modal Overlay */}
+      {isUploadModalOpen && (
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.4)', zIndex: 10000, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+          <div style={{ background: '#fff', width: '500px', borderRadius: '6px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', overflow: 'hidden' }}>
+            <div style={{ padding: '16px 20px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 500, color: '#334155' }}>Upload Files</h3>
+              <X size={18} color="#64748b" style={{ cursor: 'pointer' }} onClick={() => setIsUploadModalOpen(false)} />
+            </div>
+            <div style={{ padding: '24px 20px' }}>
+              <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '16px' }}>Select files to upload for sending.</p>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <span style={{ fontSize: '13px', color: '#334155', fontWeight: 500, minWidth: '80px' }}>Upload Files</span>
+                <div style={{ flex: 1, border: '1px solid #cbd5e1', borderRadius: '4px', display: 'flex', alignItems: 'center', background: '#fff', overflow: 'hidden' }}>
+                  <button onClick={() => fileInputRef.current.click()} style={{ padding: '6px 12px', background: '#f1f5f9', border: 'none', borderRight: '1px solid #cbd5e1', fontSize: '13px', color: '#334155', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                    Choose Files
+                  </button>
+                  <span style={{ padding: '6px 12px', fontSize: '13px', color: stagedFile ? '#334155' : '#94a3b8', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {stagedFile ? stagedFile.name : 'No file chosen'}
+                  </span>
+                  <input type="file" ref={fileInputRef} onChange={(e) => setStagedFile(e.target.files[0])} style={{ display: 'none' }} />
+                </div>
+              </div>
+            </div>
+            <div style={{ padding: '16px 20px', background: '#f8fafc', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'flex-end' }}>
+              <button onClick={handleModalUploadSubmit} disabled={!stagedFile} style={{ background: '#2563eb', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '4px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px', cursor: stagedFile ? 'pointer' : 'not-allowed', opacity: stagedFile ? 1 : 0.6 }}>
+                <Upload size={14} /> Upload
+              </button>
+            </div>
+          </div>
         </div>
+      )}
+
+      {/* Sidebar Navigation */}
+      <div style={{ width: '200px', background: '#ffffff', borderRight: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', padding: '16px 0', flexShrink: 0 }}>
         <Tab id="settings" icon={<Settings size={16} />} label="Settings" active={activeTab} set={setActiveTab} />
         <Tab id="automation" icon={<RefreshCw size={16} />} label="Automation" active={activeTab} set={setActiveTab} />
         <Tab id="alerts" icon={<AlertCircle size={16} />} label="Alerts" active={activeTab} set={setActiveTab} />
-        <Tab id="advanced" icon={<Cpu size={16} />} label="Advanced Logs" active={activeTab} set={setActiveTab} />
-        <Tab id="input" icon={<LogIn size={16} />} label="Input (Send)" active={activeTab} set={setActiveTab} />
-        <Tab id="output" icon={<LogOut size={16} />} label="Output (Receive)" active={activeTab} set={setActiveTab} />
+        <Tab id="advanced" icon={<Cpu size={16} />} label="Advanced" active={activeTab} set={setActiveTab} />
+        <Tab id="input" icon={<LogIn size={16} />} label="Input" active={activeTab} set={setActiveTab} />
+        <Tab id="output" icon={<LogOut size={16} />} label="Output" active={activeTab} set={setActiveTab} />
         <Tab id="events" icon={<Code size={16} />} label="Events" active={activeTab} set={setActiveTab} />
       </div>
 
-      {/* RIGHT VIEWPORT CONTENT PANEL */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%' }}>
-
-        {/* Sticky Header Layer */}
-        <div style={{
-          padding: '20px 24px', borderBottom: '1px solid #e2e8f0',
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#ffffff'
-        }}>
-          <div>
-            <h2 style={{ fontSize: '15px', fontWeight: 600, color: '#0f172a', margin: 0 }}>{partner.name}</h2>
-            <p style={{ fontSize: '11px', color: '#64748b', margin: '2px 0 0 0' }}>AS2 Profile Configuration Core</p>
+      {/* Main Content Area */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', overflowY: 'auto' }}>
+        
+        {/* Header */}
+        <div style={{ padding: '16px 24px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#ffffff', position: 'sticky', top: 0, zIndex: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+             <div style={{ width: '32px', height: '32px', background: '#eff6ff', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                 <FileText size={20} color="#2563eb" />
+             </div>
+            <div>
+              <h2 style={{ fontSize: '18px', fontWeight: 600, color: '#0f172a', margin: 0 }}>{formData.as2_id || partner.name}</h2>
+              <p style={{ fontSize: '12px', color: '#64748b', margin: 0 }}>AS2</p>
+            </div>
           </div>
-          <button className="btn btn-primary" onClick={onClose} style={{ padding: '6px 16px', fontSize: '13px' }}>
-            Save Changes
-          </button>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button onClick={onClose} style={{ padding: '6px 12px', fontSize: '13px', background: 'transparent', border: 'none', color: '#64748b', cursor: 'pointer', fontWeight: 500 }}>Cancel</button>
+            <button onClick={handleSaveChanges} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 16px', fontSize: '13px', background: '#2563eb', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 500 }}>
+                <Save size={14} /> Save
+            </button>
+          </div>
         </div>
 
-        {/* Dynamic Display Receptacle */}
-        <div style={{ flex: 1, padding: '24px', overflowY: 'auto', background: '#ffffff' }}>
-
-          {/* TAB 1: INTERACTIVE SETTINGS MANAGEMENT ENGINE */}
+        {/* Tab Content */}
+        <div style={{ padding: '24px', flex: 1 }}>
+          
           {activeTab === 'settings' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              <div style={{ background: '#f8fafc', padding: '16px', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
-                <h4 style={{ fontSize: '13px', fontWeight: 600, color: '#334155', margin: '0 0 14px 0' }}>Trading Partner Info</h4>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', maxWidth: '600px' }}>
+              <Section title="Settings">
+                <FieldGroup>
+                  <Label>AS2 Identifier:</Label>
+                  <Input value={formData.as2_id} onChange={e => setFormData({...formData, as2_id: e.target.value})} />
+                </FieldGroup>
+                <FieldGroup>
+                  <Label>Partner URL:</Label>
+                  <Input value={formData.url} onChange={e => setFormData({...formData, url: e.target.value})} />
+                </FieldGroup>
+              </Section>
 
-                <div className="form-group" style={{ marginBottom: '12px' }}>
-                  <label className="form-label" style={{ fontSize: '11px', fontWeight: 600, color: '#475569' }}>Connector Id:</label>
-                  <input type="text" className="form-input" value={partner.as2_id} readOnly style={{ background: '#e2e8f0', color: '#475569', fontSize: '12px' }} />
+              <Section title="Connection Info">
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+                  <div>
+                      <Label>Send Message Security:</Label>
+                      <Checkbox label="Sign send data" checked={formData.sign_outbound} onChange={e => setFormData({...formData, sign_outbound: e.target.checked})} />
+                  </div>
+                  <div>
+                      <Label>&nbsp;</Label>
+                      <Checkbox label="Encrypt send data" checked={formData.encrypt_outbound} onChange={e => setFormData({...formData, encrypt_outbound: e.target.checked})} />
+                  </div>
                 </div>
-
-                <div className="form-group" style={{ margin: 0 }}>
-                  <label className="form-label" style={{ fontSize: '11px', fontWeight: 600, color: '#475569' }}>Partner URL Callback Endpoint:</label>
-                  <input type="text" className="form-input" defaultValue={partner.url} style={{ fontSize: '12px' }} />
-                </div>
-              </div>
-
-              <div style={{ border: '1px solid #e2e8f0', borderRadius: '6px', padding: '16px' }}>
-                <h4 style={{ fontSize: '13px', fontWeight: 600, color: '#334155', margin: '0 0 14px 0' }}>Security Profiling Matrix</h4>
 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', cursor: 'pointer' }}><input type="checkbox" defaultChecked /> Sign outbound data</label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', cursor: 'pointer' }}><input type="checkbox" defaultChecked /> Encrypt outbound data</label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', cursor: 'pointer' }}><input type="checkbox" defaultChecked /> Require signatures</label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', cursor: 'pointer' }}><input type="checkbox" defaultChecked /> Require crypt-envelope</label>
-                </div>
-
-                <div className="form-group" style={{ marginBottom: '12px' }}>
-                  <label className="form-label" style={{ fontSize: '11px', fontWeight: 600 }}>Encryption Algorithm Threshold:</label>
-                  <select className="form-select" style={{ fontSize: '12px' }}>
-                    <option selected>AES256</option>
-                    <option>AES128</option>
-                    <option>3DES</option>
-                  </select>
-                </div>
-
-                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', cursor: 'pointer', marginBottom: '12px' }}>
-                  <input type="checkbox" defaultChecked /> Request MDN Acknowledgment Receipts
-                </label>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', background: '#f8fafc', padding: '10px', borderRadius: '4px', border: '1px solid #e2e8f0' }}>
                   <div>
-                    <span style={{ fontSize: '11px', fontWeight: 600, display: 'block', marginBottom: '4px', color: '#64748b' }}>Security Signature</span>
-                    <label style={{ fontSize: '12px', marginRight: '10px' }}><input type="radio" name="sec" defaultChecked /> Signed</label>
-                    <label style={{ fontSize: '12px' }}><input type="radio" name="sec" /> Unsigned</label>
+                      <Label>Receive Message Security:</Label>
+                      <Checkbox label="Require signature" checked={formData.require_signature} onChange={e => setFormData({...formData, require_signature: e.target.checked})} />
                   </div>
                   <div>
-                    <span style={{ fontSize: '11px', fontWeight: 600, display: 'block', marginBottom: '4px', color: '#64748b' }}>Delivery Option</span>
-                    <label style={{ fontSize: '12px', marginRight: '10px' }}><input type="radio" name="del" defaultChecked /> Sync</label>
-                    <label style={{ fontSize: '12px' }}><input type="radio" name="del" /> Async</label>
+                      <Label>&nbsp;</Label>
+                      <Checkbox label="Require encryption" checked={formData.require_encryption} onChange={e => setFormData({...formData, require_encryption: e.target.checked})} />
                   </div>
                 </div>
-              </div>
 
-              {/* DYNAMIC CERTIFICATE SELECTOR ACCORDION MODULE */}
-              <div style={{ border: '1px solid #e2e8f0', borderRadius: '6px', padding: '16px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '12px' }}>
-                  <ShieldCheck size={16} color="var(--accent-blue)" />
-                  <h4 style={{ fontSize: '13px', fontWeight: 600, color: '#334155', margin: 0 }}>Trading Partner Certificates</h4>
-                </div>
+                <FieldGroup>
+                    <Label>Compress send data:</Label>
+                    <Checkbox label="Compress send data" checked={formData.compress_outbound} onChange={e => setFormData({...formData, compress_outbound: e.target.checked})} />
+                </FieldGroup>
 
-                <div className="form-group" style={{ margin: 0 }}>
-                  <label className="form-label" style={{ fontSize: '11px', color: '#64748b' }}>Active Public Verification Key:</label>
-                  <select className="form-select" style={{ fontSize: '12px', fontFamily: 'monospace' }}>
-                    {loadingCerts ? (
-                      <option>Loading secure datastore records...</option>
-                    ) : (
-                      dbPartners.map(p => p.certificate && (
-                        <option key={p.id} selected={p.name === partner.name} value={p.id}>
-                          {p.name}_cert.cer (SN: {p.certificate.serial_number})
-                        </option>
-                      ))
-                    )}
-                  </select>
-                </div>
-              </div>
+                <FieldGroup>
+                  <Label>Connection Timeout (seconds):</Label>
+                  <Input type="number" value={formData.connection_timeout} onChange={e => setFormData({...formData, connection_timeout: e.target.value})} />
+                </FieldGroup>
+
+                <FieldGroup>
+                  <Label>Encryption Algorithm:</Label>
+                  <Select value={formData.encryption_algorithm} onChange={e => setFormData({...formData, encryption_algorithm: e.target.value})}>
+                    <option value="3DES">3DES</option>
+                    <option value="AES128">AES128</option>
+                    <option value="AES256">AES256</option>
+                  </Select>
+                </FieldGroup>
+
+                <FieldGroup>
+                    <Label>Request MDN receipt:</Label>
+                    <Checkbox label="Request MDN receipt" checked={formData.request_mdn} onChange={e => setFormData({...formData, request_mdn: e.target.checked})} />
+                </FieldGroup>
+                
+                {formData.request_mdn && (
+                  <div style={{ marginLeft: '24px' }}>
+                    <FieldGroup>
+                        <Label>Security:</Label>
+                        <div style={{ display: 'flex', gap: '16px' }}>
+                            <Radio label="Signed" name="mdn_sec" checked={formData.mdn_security === 'SIGNED'} onChange={() => setFormData({...formData, mdn_security: 'SIGNED'})} />
+                            <Radio label="Unsigned" name="mdn_sec" checked={formData.mdn_security === 'UNSIGNED'} onChange={() => setFormData({...formData, mdn_security: 'UNSIGNED'})} />
+                        </div>
+                    </FieldGroup>
+                    <FieldGroup>
+                        <Label>Delivery:</Label>
+                        <div style={{ display: 'flex', gap: '16px' }}>
+                            <Radio label="Synchronous" name="mdn_del" checked={formData.mdn_delivery_mode === 'SYNC'} onChange={() => setFormData({...formData, mdn_delivery_mode: 'SYNC'})} />
+                            <Radio label="Asynchronous" name="mdn_del" checked={formData.mdn_delivery_mode === 'ASYNC'} onChange={() => setFormData({...formData, mdn_delivery_mode: 'ASYNC'})} />
+                        </div>
+                    </FieldGroup>
+                  </div>
+                )}
+              </Section>
+
+              <Section title="Trading Partner Certificates">
+                <FieldGroup>
+                  <Label>Encryption Certificate:</Label>
+                  <Select value={formData.certificate_id} onChange={e => setFormData({...formData, certificate_id: e.target.value})}>
+                    <option value="">Select Certificate</option>
+                    {loadingCerts ? <option>Loading...</option> : dbCerts.map((c, i) => (
+                       <option key={i} value={c.id}>{c.alias || c.serial_number}</option>
+                    ))}
+                  </Select>
+                </FieldGroup>
+              </Section>
             </div>
           )}
 
-          {/* TAB 2: INPUT VIEWPORT GRID */}
-          {activeTab === 'input' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h4 style={{ fontSize: '13px', fontWeight: 600, margin: 0 }}>Outbound Payload Transmission Buffer</h4>
-                <button className="btn btn-secondary" style={{ fontSize: '11px', padding: '4px 8px' }}>+ Staging File</button>
-              </div>
-              <table style={{ width: '100%', fontSize: '12px', borderCollapse: 'collapse', textAlign: 'left' }}>
-                <thead>
-                  <tr style={{ borderBottom: '2px solid #e2e8f0', color: '#64748b' }}>
-                    <th style={{ paddingBottom: '8px' }}>File Asset Name</th>
-                    <th>Size</th>
-                    <th>Staged Time</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {mockInputFiles.map((f, i) => (
-                    <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                      <td style={{ padding: '10px 0', color: '#2563eb', fontWeight: 500 }}>{f.name}</td>
-                      <td>{f.size}</td>
-                      <td style={{ color: '#64748b' }}>{f.date}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {/* TAB 3: OUTPUT VIEWPORT GRID */}
-          {activeTab === 'output' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h4 style={{ fontSize: '13px', fontWeight: 600, margin: 0 }}>Received Message Receptacle Document Store</h4>
-                <input type="text" placeholder="Search filename..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} style={{ fontSize: '11px', padding: '3px 8px', border: '1px solid #e2e8f0', borderRadius: '4px' }} />
-              </div>
-              <table style={{ width: '100%', fontSize: '12px', borderCollapse: 'collapse', textAlign: 'left' }}>
-                <thead>
-                  <tr style={{ borderBottom: '2px solid #e2e8f0', color: '#64748b' }}>
-                    <th style={{ paddingBottom: '8px' }}>Asset Filename</th>
-                    <th>Size</th>
-                    <th>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {mockOutputFiles.filter(f => f.name.toLowerCase().includes(searchTerm.toLowerCase())).map((f, i) => (
-                    <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                      <td style={{ padding: '10px 0', fontWeight: 500 }}>{f.name}</td>
-                      <td>{f.size}</td>
-                      <td><span style={{ background: '#f0fdf4', color: 'var(--accent-green)', padding: '2px 6px', borderRadius: '4px', fontWeight: 600, fontSize: '11px' }}>{f.status}</span></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {/* TAB 4: ADVANCED HANDSHAKE TELEMETRY LOGGER */}
           {activeTab === 'advanced' && (
-            <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-              <h4 style={{ fontSize: '13px', fontWeight: 600, margin: '0 0 10px 0' }}>Protocol Interconnected Handshake Stream</h4>
-              <pre style={{
-                background: '#0f172a', color: '#f8fafc', padding: '12px', borderRadius: '4px',
-                fontSize: '11px', fontFamily: 'monospace', overflow: 'auto', maxHeight: '440px', whiteSpace: 'pre-wrap'
-              }}>
-                {`[2026-05-18T10:04:11.206Z] [Info] Handshake runtime tracking initialized.\n[2026-05-18T10:04:11.231Z] [SSLStatus] Negotiated security layer parameters: Protocol TLSv1.2\n[2026-05-18T10:04:11.241Z] [Info] Cipher suite alignment verified successfully: AES-GCM-SHA256\n[2026-05-18T10:04:11.955Z] [Info] Connection pipe closed. Handshake sequence status code: [0] Successful Validation`}
-              </pre>
-            </div>
+             <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', maxWidth: '600px' }}>
+                 <Section title="Advanced">
+                     <FieldGroup>
+                         <Label>AS2 Reliability:</Label>
+                         <Checkbox label="Enable AS2 reliability" checked={formData.as2_reliability} onChange={e => setFormData({...formData, as2_reliability: e.target.checked})} />
+                     </FieldGroup>
+                     <FieldGroup>
+                        <Label>AS2 Reliability Interval (days):</Label>
+                        <Input type="number" value={formData.as2_reliability_interval} onChange={e => setFormData({...formData, as2_reliability_interval: e.target.value})} disabled={!formData.as2_reliability}/>
+                     </FieldGroup>
+                 </Section>
+
+                 <Section title="Alternate Local Profile">
+                     <FieldGroup>
+                         <Label>Local AS2 Identifier:</Label>
+                         <Input value={formData.alternate_local_as2_id} onChange={e => setFormData({...formData, alternate_local_as2_id: e.target.value})} />
+                     </FieldGroup>
+                     <FieldGroup>
+                         <Label>Private Certificate:</Label>
+                         <Select value={formData.alternate_private_cert_id} onChange={e => setFormData({...formData, alternate_private_cert_id: e.target.value})}>
+                             <option value="">Select Certificate</option>
+                             {dbCerts.map((c, i) => ( <option key={i} value={c.id}>{c.alias || c.serial_number}</option> ))}
+                         </Select>
+                     </FieldGroup>
+                     <FieldGroup>
+                         <Label>Private Certificate Password:</Label>
+                         <Input type="password" value={formData.alternate_private_cert_password} onChange={e => setFormData({...formData, alternate_private_cert_password: e.target.value})} />
+                     </FieldGroup>
+                 </Section>
+
+                 <Section title="TLS Client Authentication">
+                     <FieldGroup>
+                         <Label>Use Profile Settings:</Label>
+                         <Checkbox label="Use private certificate from the Profile tab" checked={formData.tls_use_profile_settings} onChange={e => setFormData({...formData, tls_use_profile_settings: e.target.checked})} />
+                     </FieldGroup>
+                     {!formData.tls_use_profile_settings && (
+                         <>
+                         <FieldGroup>
+                            <Label>Private Certificate:</Label>
+                            <Select value={formData.tls_private_cert_id} onChange={e => setFormData({...formData, tls_private_cert_id: e.target.value})}>
+                                <option value="">Select Certificate</option>
+                                {dbCerts.map((c, i) => ( <option key={i} value={c.id}>{c.alias || c.serial_number}</option> ))}
+                            </Select>
+                        </FieldGroup>
+                        <FieldGroup>
+                            <Label>Private Certificate Password:</Label>
+                            <Input type="password" value={formData.tls_private_cert_password} onChange={e => setFormData({...formData, tls_private_cert_password: e.target.value})} />
+                        </FieldGroup>
+                        </>
+                     )}
+                 </Section>
+
+                 <Section title="HTTP Authentication">
+                    <FieldGroup>
+                         <Label>HTTP Authentication:</Label>
+                         <Checkbox label="Use HTTP authentication" checked={formData.http_auth_enabled} onChange={e => setFormData({...formData, http_auth_enabled: e.target.checked})} />
+                     </FieldGroup>
+                     {formData.http_auth_enabled && (
+                         <>
+                         <FieldGroup>
+                            <Label>HTTP Authentication Type:</Label>
+                            <div style={{ display: 'flex', gap: '16px' }}>
+                                <Radio label="Basic" name="http_auth" checked={formData.http_auth_type === 'BASIC'} onChange={() => setFormData({...formData, http_auth_type: 'BASIC'})} />
+                                <Radio label="Digest" name="http_auth" checked={formData.http_auth_type === 'DIGEST'} onChange={() => setFormData({...formData, http_auth_type: 'DIGEST'})} />
+                            </div>
+                         </FieldGroup>
+                         <FieldGroup>
+                             <Label>User:</Label>
+                             <Input value={formData.http_auth_user} onChange={e => setFormData({...formData, http_auth_user: e.target.value})} />
+                         </FieldGroup>
+                         <FieldGroup>
+                             <Label>Password:</Label>
+                             <Input type="password" value={formData.http_auth_password} onChange={e => setFormData({...formData, http_auth_password: e.target.value})} />
+                         </FieldGroup>
+                         </>
+                     )}
+                 </Section>
+
+                 <Section title="Advanced Settings"> 
+                    <FieldGroup>
+                        <Label>Signature Algorithm:</Label>
+                        <Select value={formData.signature_algorithm} onChange={e => setFormData({...formData, signature_algorithm: e.target.value})}>
+                            <option value="SHA-256">SHA-256</option>
+                            <option value="SHA-1">SHA-1</option>
+                        </Select>
+                    </FieldGroup>
+
+                    <FieldGroup>
+                        <Label>TLS Enabled Protocols:</Label>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            {Object.keys(formData.tls_protocols).map(proto => (
+                                <Checkbox key={proto} label={proto.replace('_', '.')} checked={formData.tls_protocols[proto]} onChange={() => handleTlsChange(proto)} />
+                            ))}
+                        </div>
+                    </FieldGroup>
+
+                    <FieldGroup>
+                        <Label>Temp Receive Directory:</Label>
+                        <Input value={formData.temp_receive_directory} onChange={e => setFormData({...formData, temp_receive_directory: e.target.value})} />
+                    </FieldGroup>
+
+                    <FieldGroup>
+                        <Label>HTTP Headers:</Label>
+                        <Input value={formData.custom_http_headers} onChange={e => setFormData({...formData, custom_http_headers: e.target.value})} />
+                    </FieldGroup>
+                 </Section>
+
+                 <Section title="Proxy Settings">
+                     <FieldGroup>
+                         <Label>Use Global:</Label>
+                         <Checkbox label="Use global proxy settings from the Settings page" checked={formData.use_global_proxy} onChange={e => setFormData({...formData, use_global_proxy: e.target.checked})} />
+                     </FieldGroup>
+                     {!formData.use_global_proxy && (
+                         <>
+                         <FieldGroup>
+                             <Label>Proxy Type:</Label>
+                             <Select value={formData.proxy_type} onChange={e => setFormData({...formData, proxy_type: e.target.value})}>
+                                 <option value="None">None</option>
+                                 <option value="HTTP">HTTP</option>
+                                 <option value="SOCKS5">SOCKS5</option>
+                             </Select>
+                         </FieldGroup>
+                         <FieldGroup>
+                             <Label>Proxy Host:</Label>
+                             <Input value={formData.proxy_host} onChange={e => setFormData({...formData, proxy_host: e.target.value})} />
+                         </FieldGroup>
+                         <FieldGroup>
+                             <Label>Proxy Port:</Label>
+                             <Input type="number" value={formData.proxy_port} onChange={e => setFormData({...formData, proxy_port: e.target.value})} />
+                         </FieldGroup>
+                         <FieldGroup>
+                             <Label>Proxy User:</Label>
+                             <Input value={formData.proxy_user} onChange={e => setFormData({...formData, proxy_user: e.target.value})} />
+                         </FieldGroup>
+                         <FieldGroup>
+                             <Label>Proxy Password:</Label>
+                             <Input type="password" value={formData.proxy_password} onChange={e => setFormData({...formData, proxy_password: e.target.value})} />
+                         </FieldGroup>
+                         </>
+                     )}
+                 </Section>
+             </div>
           )}
 
+          {/* --- INPUT TAB (ArcESB Exact Replica + Functional Upload) --- */}
+          {activeTab === 'input' && (
+              <div style={{ display: 'flex', flexDirection: 'column', height: '100%', color: '#334155' }}>
+                  <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '20px' }}>Place files and/or messages that need to be processed into the Send folder.</p>
+                  
+                  {/* Toolbar */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'nowrap', gap: '12px' }}>
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'nowrap' }}>
+                          <button style={{ padding: '6px 10px', background: '#fff', border: '1px solid #cbd5e1', borderRadius: '4px', cursor: 'pointer', display: 'flex', alignItems: 'center', whiteSpace: 'nowrap' }}>
+                              <RefreshCw size={14} color="#64748b" />
+                          </button>
+                          
+                          <div style={{ display: 'flex', border: '1px solid #cbd5e1', borderRadius: '4px', overflow: 'hidden' }}>
+                              <button onClick={handleDeleteSelected} disabled={selectedRows.length === 0} style={{ padding: '6px 12px', background: '#f8fafc', border: 'none', borderRight: '1px solid #cbd5e1', color: selectedRows.length > 0 ? '#ef4444' : '#94a3b8', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', cursor: selectedRows.length > 0 ? 'pointer' : 'not-allowed', transition: 'all 0.2s', whiteSpace: 'nowrap' }}>
+                                  <Trash2 size={14} /> Delete
+                              </button>
+                              <button onClick={handleSendSelected} disabled={selectedRows.length === 0 || isSending} style={{ padding: '6px 12px', background: '#f8fafc', color: selectedRows.length > 0 && !isSending ? '#334155' : '#94a3b8', border: 'none', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', cursor: selectedRows.length > 0 && !isSending ? 'pointer' : 'not-allowed', transition: 'all 0.2s', whiteSpace: 'nowrap' }}>
+                                  <Send size={14} /> {isSending ? 'Sending...' : 'Send'}
+                              </button>
+                          </div>
+                          
+                          {/* More Dropdown */}
+                          <div style={{ position: 'relative' }}>
+                            <button onClick={() => setIsMoreMenuOpen(!isMoreMenuOpen)} style={{ padding: '6px 12px', background: '#f8fafc', color: '#475569', border: '1px solid #cbd5e1', borderRadius: '4px', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                More <ChevronDown size={14} />
+                            </button>
+                            {isMoreMenuOpen && (
+                              <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: '4px', background: '#fff', border: '1px solid #e2e8f0', borderRadius: '4px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', zIndex: 50, width: '150px', padding: '4px 0' }}>
+                                <div style={{ padding: '8px 16px', fontSize: '13px', cursor: 'pointer', color: '#334155', whiteSpace: 'nowrap' }} onClick={() => setIsMoreMenuOpen(false)}>Create Test Files</div>
+                                <div style={{ padding: '8px 16px', fontSize: '13px', cursor: 'pointer', color: '#334155', whiteSpace: 'nowrap' }} onClick={() => { setIsMoreMenuOpen(false); setIsUploadModalOpen(true); }}>Upload File</div>
+                                <div style={{ padding: '8px 16px', fontSize: '13px', cursor: 'pointer', color: '#94a3b8', whiteSpace: 'nowrap' }}>Re-queue</div>
+                              </div>
+                            )}
+                          </div>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '8px', flex: 1, justifyContent: 'flex-end', minWidth: '200px' }}>
+                          <div style={{ position: 'relative', width: '100%', maxWidth: '250px' }}>
+                              <Search size={14} color="#94a3b8" style={{ position: 'absolute', left: '10px', top: '9px' }} />
+                              <input type="text" placeholder="Search for..." style={{ width: '100%', padding: '6px 10px 6px 32px', border: '1px solid #cbd5e1', borderRadius: '4px', fontSize: '13px', outline: 'none' }} />
+                          </div>
+                      </div>
+                  </div>
+
+                  {/* Filters */}
+                  <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'nowrap' }}>
+                      <select style={{ padding: '6px 32px 6px 12px', border: '1px solid #cbd5e1', borderRadius: '4px', fontSize: '13px', background: '#fff', color: '#475569', outline: 'none', appearance: 'none', whiteSpace: 'nowrap' }}>
+                          <option>All-time</option>
+                      </select>
+                      <select style={{ padding: '6px 32px 6px 12px', border: '1px solid #cbd5e1', borderRadius: '4px', fontSize: '13px', background: '#fff', color: '#475569', outline: 'none', appearance: 'none', whiteSpace: 'nowrap' }}>
+                          <option>All Status</option>
+                      </select>
+                  </div>
+
+                  {/* Data Table */}
+                  <div style={{ border: '1px solid #e2e8f0', borderRadius: '4px', background: '#fff', overflowX: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', textAlign: 'left', tableLayout: 'auto' }}>
+                          <thead>
+                              <tr style={{ borderBottom: '1px solid #e2e8f0', background: '#f8fafc' }}>
+                                  <th style={{ padding: '12px 16px', width: '40px', whiteSpace: 'nowrap' }}>
+                                      <input type="checkbox" onChange={handleSelectAll} checked={transactionLogs.length > 0 && selectedRows.length === transactionLogs.length} />
+                                  </th>
+                                  <th style={{ padding: '12px 0', fontWeight: 600, color: '#475569', width: '30px', whiteSpace: 'nowrap' }}></th>
+                                  <th style={{ padding: '12px', fontWeight: 600, color: '#475569', whiteSpace: 'nowrap' }}>Date/Time</th>
+                                  <th style={{ padding: '12px', fontWeight: 600, color: '#475569', whiteSpace: 'nowrap' }}>Status</th>
+                                  <th style={{ padding: '12px', fontWeight: 600, color: '#475569', whiteSpace: 'nowrap' }}>File Name</th>
+                                  <th style={{ padding: '12px', fontWeight: 600, color: '#475569', whiteSpace: 'nowrap', textAlign: 'right' }}>File Size</th>
+                              </tr>
+                          </thead>
+                          <tbody>
+                              {transactionLogs.length === 0 ? (
+                                <tr>
+                                  <td colSpan="6" style={{ padding: '40px', textAlign: 'center', color: '#94a3b8', whiteSpace: 'nowrap' }}>
+                                    No input messages found. Click 'More' to upload a file.
+                                  </td>
+                                </tr>
+                              ) : (
+                                transactionLogs.map((log) => (
+                                  <React.Fragment key={log.id}>
+                                      <tr style={{ borderBottom: expandedRow !== log.id ? '1px solid #e2e8f0' : 'none', background: expandedRow === log.id ? '#f1f5f9' : 'transparent', transition: 'background 0.2s' }}>
+                                          <td style={{ padding: '12px 16px', whiteSpace: 'nowrap' }}>
+                                            <input type="checkbox" checked={selectedRows.includes(log.id)} onChange={() => toggleRowSelection(log.id)} />
+                                          </td>
+                                          <td style={{ padding: '12px 0', cursor: 'pointer', whiteSpace: 'nowrap' }} onClick={() => setExpandedRow(expandedRow === log.id ? null : log.id)}>
+                                              {expandedRow === log.id ? <ChevronDown size={16} color="#64748b" /> : <ChevronRight size={16} color="#64748b" />}
+                                          </td>
+                                          <td style={{ padding: '12px', color: '#475569', whiteSpace: 'nowrap' }}>{log.date}</td>
+                                          <td style={{ padding: '12px', color: log.status === 'Success' ? '#10b981' : log.status === 'Error' ? '#ef4444' : '#64748b', whiteSpace: 'nowrap' }}>{log.status}</td>
+                                          <td style={{ padding: '12px', color: '#2563eb', cursor: 'pointer', whiteSpace: 'nowrap', maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{log.fileName}</td>
+                                          <td style={{ padding: '12px', color: '#475569', whiteSpace: 'nowrap', textAlign: 'right' }}>{log.fileSize}</td>
+                                      </tr>
+                                      
+                                      {/* Expanded Content (ArcESB Detail Layout) */}
+                                      {expandedRow === log.id && (
+                                          <tr style={{ borderBottom: '1px solid #e2e8f0', background: '#f1f5f9' }}>
+                                              <td colSpan="6" style={{ padding: '0 48px 24px 48px' }}>
+                                                  <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: '4px', overflow: 'hidden' }}>
+                                                      
+                                                      <div style={{ display: 'flex', borderBottom: '1px solid #e2e8f0', padding: '0 16px', justifyContent: 'space-between', alignItems: 'center', background: '#fff' }}>
+                                                          <div style={{ display: 'flex', gap: '24px' }}>
+                                                              <div onClick={() => setInnerTab('details')} style={{ padding: '12px 0', fontSize: '13px', cursor: 'pointer', color: innerTab === 'details' ? '#2563eb' : '#64748b', borderBottom: innerTab === 'details' ? '2px solid #2563eb' : '2px solid transparent', fontWeight: innerTab === 'details' ? 600 : 400, whiteSpace: 'nowrap' }}>Additional Details</div>
+                                                              <div onClick={() => setInnerTab('logs')} style={{ padding: '12px 0', fontSize: '13px', cursor: 'pointer', color: innerTab === 'logs' ? '#2563eb' : '#64748b', borderBottom: innerTab === 'logs' ? '2px solid #2563eb' : '2px solid transparent', fontWeight: innerTab === 'logs' ? 600 : 400, whiteSpace: 'nowrap' }}>Logs</div>
+                                                          </div>
+                                                          {innerTab === 'logs' && (
+                                                              <button style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'transparent', border: '1px solid #cbd5e1', padding: '4px 10px', borderRadius: '4px', fontSize: '12px', color: '#475569', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                                                  <Download size={14} /> Download All Logs
+                                                              </button>
+                                                          )}
+                                                      </div>
+                                                      
+                                                      {innerTab === 'details' && (
+                                                          <div style={{ padding: '20px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', background: '#fff' }}>
+                                                              <div>
+                                                                  <div style={{ color: '#64748b', fontSize: '12px', marginBottom: '4px', whiteSpace: 'nowrap' }}>Other Headers:</div>
+                                                                  <div style={{ fontSize: '13px', wordBreak: 'break-all', marginBottom: '16px' }}>Processed: by Default:{formData.as2_id}; {log.status}; {log.date}</div>
+                                                                  
+                                                                  {log.error && (
+                                                                      <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '4px', padding: '12px' }}>
+                                                                          <div style={{ color: '#b91c1c', fontWeight: 600, fontSize: '12px', marginBottom: '4px', whiteSpace: 'nowrap' }}>Error:</div>
+                                                                          <div style={{ color: '#b91c1c', fontSize: '13px' }}>{log.error}</div>
+                                                                      </div>
+                                                                  )}
+                                                              </div>
+                                                              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                                                                  <div>
+                                                                      <div style={{ color: '#64748b', fontSize: '12px', marginBottom: '4px', whiteSpace: 'nowrap' }}>Message Id:</div>
+                                                                      <div style={{ fontSize: '13px', color: '#334155', wordBreak: 'break-all' }}>{log.msgId}</div>
+                                                                  </div>
+                                                                  <div>
+                                                                      <div style={{ color: '#64748b', fontSize: '12px', marginBottom: '4px', whiteSpace: 'nowrap' }}>Processing Time:</div>
+                                                                      <div style={{ fontSize: '13px', color: '#334155', whiteSpace: 'nowrap' }}>{log.processingTime}</div>
+                                                                  </div>
+                                                                  <div>
+                                                                      <div style={{ color: '#64748b', fontSize: '12px', marginBottom: '4px', whiteSpace: 'nowrap' }}>File Size:</div>
+                                                                      <div style={{ fontSize: '13px', color: '#334155', whiteSpace: 'nowrap' }}>{log.fileSize}</div>
+                                                                  </div>
+                                                              </div>
+                                                          </div>
+                                                      )}
+
+                                                      {innerTab === 'logs' && (
+                                                          <div style={{ padding: '0', background: '#fff', overflowX: 'auto' }}>
+                                                              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                                                                  <thead>
+                                                                      <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+                                                                          <th style={{ padding: '10px 20px', fontWeight: 600, color: '#475569', whiteSpace: 'nowrap' }}>Creation Time</th>
+                                                                          <th style={{ padding: '10px 20px', fontWeight: 600, color: '#475569', whiteSpace: 'nowrap' }}>Log Type</th>
+                                                                          <th style={{ padding: '10px 20px', fontWeight: 600, color: '#475569', whiteSpace: 'nowrap' }}>File Name</th>
+                                                                          <th style={{ padding: '10px 20px', whiteSpace: 'nowrap' }}></th>
+                                                                      </tr>
+                                                                  </thead>
+                                                                  <tbody>
+                                                                      <tr style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                                                          <td style={{ padding: '10px 20px', color: '#475569', whiteSpace: 'nowrap' }}>{log.date}</td>
+                                                                          <td style={{ padding: '10px 20px', color: '#475569', whiteSpace: 'nowrap' }}>Log</td>
+                                                                          <td style={{ padding: '10px 20px', color: '#2563eb', whiteSpace: 'nowrap' }}>{log.id}_transaction.log</td>
+                                                                          <td style={{ padding: '10px 20px', textAlign: 'right', whiteSpace: 'nowrap' }}><Download size={14} color="#64748b" style={{ cursor: 'pointer' }} /></td>
+                                                                      </tr>
+                                                                      {log.status !== 'Unsent (Attempts: 1)' && (
+                                                                        <tr>
+                                                                            <td style={{ padding: '10px 20px', color: '#475569', whiteSpace: 'nowrap' }}>{log.date}</td>
+                                                                            <td style={{ padding: '10px 20px', color: '#475569', whiteSpace: 'nowrap' }}>MDN</td>
+                                                                            <td style={{ padding: '10px 20px', color: '#2563eb', whiteSpace: 'nowrap' }}>{log.id}_receipt.mdn</td>
+                                                                            <td style={{ padding: '10px 20px', textAlign: 'right', whiteSpace: 'nowrap' }}><Download size={14} color="#64748b" style={{ cursor: 'pointer' }} /></td>
+                                                                        </tr>
+                                                                      )}
+                                                                  </tbody>
+                                                              </table>
+                                                          </div>
+                                                      )}
+                                                  </div>
+                                              </td>
+                                          </tr>
+                                      )}
+                                  </React.Fragment>
+                                ))
+                              )}
+                          </tbody>
+                      </table>
+                      
+                      {/* Table Footer */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: '#f8fafc', borderTop: '1px solid #e2e8f0', fontSize: '12px', color: '#64748b', whiteSpace: 'nowrap' }}>
+                          <div>Showing {transactionLogs.length > 0 ? 1 : 0} to {transactionLogs.length} of {transactionLogs.length} entries</div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  Records per page: 
+                                  <select style={{ padding: '4px', border: '1px solid #cbd5e1', borderRadius: '4px', outline: 'none' }}><option>50</option></select>
+                              </div>
+                              <div style={{ display: 'flex', gap: '4px' }}>
+                                  <button style={{ padding: '4px 8px', border: '1px solid #cbd5e1', background: '#fff', borderRadius: '4px', cursor: 'pointer' }}>&lt;</button>
+                                  <button style={{ padding: '4px 8px', border: '1px solid #2563eb', background: '#2563eb', color: '#fff', borderRadius: '4px', cursor: 'pointer' }}>1</button>
+                                  <button style={{ padding: '4px 8px', border: '1px solid #cbd5e1', background: '#fff', borderRadius: '4px', cursor: 'pointer' }}>&gt;</button>
+                              </div>
+                          </div>
+                      </div>
+                  </div>
+              </div>
+          )}
         </div>
       </div>
     </div>
   );
 };
 
+// --- Reusable UI Components ---
+
 const Tab = ({ id, icon, label, active, set }) => (
-  <div
-    onClick={() => set(id)}
-    style={{
-      display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 20px',
-      fontSize: '12px', fontWeight: active === id ? 600 : 500, cursor: 'pointer',
-      color: active === id ? 'var(--accent-blue)' : '#475569',
-      background: active === id ? '#eff6ff' : 'transparent',
-      borderLeft: `3px solid ${active === id ? 'var(--accent-blue)' : 'transparent'}`,
-      transition: 'all 0.15s ease'
-    }}
-  >
+  <div onClick={() => set(id)} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 24px', fontSize: '13px', fontWeight: 500, cursor: 'pointer', color: active === id ? '#2563eb' : '#475569', background: active === id ? '#eff6ff' : 'transparent', borderRight: `3px solid ${active === id ? '#2563eb' : 'transparent'}`, whiteSpace: 'nowrap' }}>
     {icon}
     <span>{label}</span>
   </div>
+);
+
+const Section = ({ title, children }) => (
+    <div style={{ marginBottom: '24px' }}>
+        <h3 style={{ fontSize: '14px', fontWeight: 600, color: '#334155', borderBottom: '1px solid #e2e8f0', paddingBottom: '8px', marginBottom: '16px', whiteSpace: 'nowrap' }}>{title}</h3>
+        {children}
+    </div>
+);
+
+const FieldGroup = ({ children }) => (
+    <div style={{ marginBottom: '16px' }}>{children}</div>
+);
+
+const Label = ({ children }) => (
+    <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: '#475569', marginBottom: '6px', whiteSpace: 'nowrap' }}>{children}</label>
+);
+
+const Input = (props) => (
+    <input {...props} style={{ width: '100%', padding: '8px 12px', border: '1px solid #cbd5e1', borderRadius: '4px', fontSize: '13px', outline: 'none', background: props.disabled ? '#f1f5f9' : '#fff' }} />
+);
+
+const Select = (props) => (
+    <select {...props} style={{ width: '100%', padding: '8px 12px', border: '1px solid #cbd5e1', borderRadius: '4px', fontSize: '13px', outline: 'none', background: '#fff' }}>
+        {props.children}
+    </select>
+);
+
+const Checkbox = ({ label, checked, onChange }) => (
+    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#334155', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+        <input type="checkbox" checked={checked} onChange={onChange} style={{ cursor: 'pointer' }} />
+        {label}
+    </label>
+);
+
+const Radio = ({ label, name, checked, onChange }) => (
+    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: '#334155', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+        <input type="radio" name={name} checked={checked} onChange={onChange} style={{ cursor: 'pointer' }} />
+        {label}
+    </label>
 );
 
 export default AdvancedSettingsDrawer;

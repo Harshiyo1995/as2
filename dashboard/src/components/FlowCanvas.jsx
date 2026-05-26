@@ -1,6 +1,7 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import ReactFlow, { Controls, Background, useNodesState, useEdgesState, addEdge, MarkerType } from 'reactflow';
 import AdvancedSettingsDrawer from './AdvancedSettingsDrawer';
+import 'reactflow/dist/style.css';
 
 const initialNodes = [
   {
@@ -63,33 +64,59 @@ const FlowCanvas = () => {
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
   const [selectedPartner, setSelectedPartner] = useState(null);
+  const [liveDbPartner, setLiveDbPartner] = useState(null);
 
   const onConnect = useCallback((params) => setEdges((eds) => addEdge(params, eds)), [setEdges]);
 
+  // DYNAMIC ALIGNMENT PASSAGE: Fetch records directly from active DB state on load
+  useEffect(() => {
+    fetch('http://localhost:8080/api/partners')
+      .then((res) => res.json())
+      .then((data) => {
+        // Look for the specific profile record matching our target connection ID
+        const veevaRecord = data.find((p) => p.as2_id === 'connectionvault1021');
+        if (veevaRecord) {
+          setLiveDbPartner(veevaRecord);
+        }
+      })
+      .catch((err) => console.error('Failed to sync canvas view with database context', err));
+  }, []);
+
   const onNodeClick = (event, node) => {
-    // Mock partner data for the settings drawer based on the clicked node
     if (node.id === '2') {
-      setSelectedPartner({ name: 'veeva_vault', as2_id: 'dev1021-sync', url: 'https://as2.veevavault.com/api/v1/inbound/transmission' });
+      if (liveDbPartner) {
+        // If database data exists, load it directly into the drawer context
+        setSelectedPartner(liveDbPartner);
+      } else {
+        // Fallback default state if database lookup hasn't resolved yet
+        setSelectedPartner({ 
+          id: 'connectionvault1021',
+          name: 'dev1021-async', 
+          as2_id: 'connectionvault1021', 
+          url: 'https://connectionvault1021.gateway.dev.veevavaultsafety.com/api/v1/inbound/transmission',
+          sign_outbound: true,
+          encrypt_outbound: true,
+          encryption_algorithm: '3DES',
+          request_mdn: true,
+          mdn_delivery_mode: 'SYNC'
+        });
+      }
     } else {
-      setSelectedPartner({ name: 'test_partner', as2_id: 'dev1021-async', url: 'https://test.com/as2' });
+      setSelectedPartner({ id: 'dev1021-async', name: 'test_partner', as2_id: 'dev1021-async', url: 'https://test.com/as2' });
     }
   };
 
   return (
     <div style={{ display: 'flex', width: '100%', height: '100%' }}>
       <div style={{ flex: 1, position: 'relative' }}>
-        <div className="top-toolbar">
+        <div className="top-toolbar" style={{ display: 'flex', padding: '10px', background: 'white', borderBottom: '1px solid #cbd5e1', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
-            <select className="form-select" style={{ width: '180px' }}>
+            <select className="form-select" style={{ width: '180px', padding: '6px' }}>
               <option>Flows / Default</option>
             </select>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button className="btn btn-secondary">Undo</button>
-              <button className="btn btn-secondary">Redo</button>
-            </div>
           </div>
           <div>
-            <input type="text" placeholder="Search Connectors, API Setting, Saved Views..." className="form-input" style={{ width: '350px', background: '#f8fafc' }} />
+            <input type="text" placeholder="Search Connectors..." className="form-input" style={{ width: '350px', background: '#f8fafc', padding: '6px 12px', border: '1px solid #cbd5e1', borderRadius: '4px' }} />
           </div>
         </div>
         

@@ -23,7 +23,7 @@ import { AppController } from './app.controller';
       password: process.env.DB_PASSWORD || 'postgres',
       database: process.env.DB_DATABASE || 'as2_gateway',
       entities: [Certificate, TradingPartner, Transaction],
-      synchronize: false,
+      synchronize: true,
     }),
     DatabaseModule,
     As2Module,

@@ -1,12 +1,14 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { StorageService } from '../storage/storage.service';
 import { CryptoService } from '../crypto/crypto.service';
+import { TradingPartnerService } from '../database/trading-partner.service';
 import { v4 as uuidv4 } from 'uuid';
 import { pipeline } from 'stream/promises';
 import { PassThrough } from 'stream';
 import * as http from 'http';
 import * as https from 'https';
 import { URL } from 'url';
+import * as crypto from 'crypto';
 
 @Injectable()
 export class As2OutboundService {
@@ -15,98 +17,131 @@ export class As2OutboundService {
   constructor(
     private readonly storageService: StorageService,
     private readonly cryptoService: CryptoService,
+    private readonly partnerService: TradingPartnerService 
   ) {}
 
-  /**
-   * Orchestrates the outbound streaming pipeline:
-   * Read Raw -> Compress -> Sign -> Encrypt -> HTTP POST
-   */
-  async sendPayload(
-    filename: string,
-    senderAs2Id: string,
-    receiverAs2Id: string,
-    targetUrl: string,
-    certificatePem: string,
-    privateKeyPem: string,
-    receiverCertPem: string
-  ): Promise<void> {
-    const messageId = `<${uuidv4()}@${senderAs2Id}>`;
-    this.logger.log(`Starting Outbound Transmission for ${messageId} to ${targetUrl}`);
+  async sendPayload(filename: string, senderAs2Id: string, receiverAs2Id: string): Promise<void> {
+    const messageId = `<${uuidv4()}@${senderAs2Id.toLowerCase()}>`;
+    this.logger.log(`Starting Outbound Transmission for ${messageId} (${senderAs2Id} -> ${receiverAs2Id})`);
 
-    const readStream = this.storageService.createReadStream(filename);
-    const passThroughToHttp = new PassThrough();
+    const senderStation = await this.partnerService.getSystemCertificateByAs2Id(senderAs2Id);
+    const receiverPartner = await this.partnerService.getPartnerWithCertificate(receiverAs2Id);
 
-    // Setup HTTP Request
-    const parsedUrl = new URL(targetUrl);
+    if (!senderStation || !senderStation.private_key_pem) throw new BadRequestException(`Sender Station ${senderAs2Id} is missing a private key.`);
+    if (!receiverPartner) throw new BadRequestException(`Receiver Partner ${receiverAs2Id} profile is missing.`);
+    if (!receiverPartner.url) throw new BadRequestException(`Receiver Partner ${receiverAs2Id} is missing a destination URL.`);
+
+    const certRepository = this.partnerService['certRepository'];
+    const explicitCert = await certRepository.findOne({
+      where: [
+        { alias: `${receiverAs2Id}_public_cert` },
+        { alias: `${receiverAs2Id}-public-cert` },
+        { alias: 'connectionvault1021_public_cert' }
+      ]
+    });
+
+    if (!explicitCert || !explicitCert.pem_data) {
+      throw new BadRequestException(`Unable to resolve a valid public encryption certificate for target recipient ID: ${receiverAs2Id}`);
+    }
+    
+    const encryptionCertPem = explicitCert.pem_data;
+
+    const parsedUrl = new URL(receiverPartner.url);
+    const headers: any = {
+      'AS2-From': senderAs2Id,
+      'AS2-To': receiverAs2Id,
+      'Message-ID': messageId,
+      'Subject': 'Outbound B2B Transmission',
+      'Date': new Date().toUTCString(),
+      'AS2-Version': '1.2',
+    };
+
+    if (receiverPartner.request_mdn) {
+      const localMdnCallback = process.env.LOCAL_MDN_URL || 'http://localhost:8080/as2/mdn';
+      headers['Disposition-Notification-To'] = localMdnCallback;
+      if (receiverPartner.mdn_delivery_mode === 'ASYNC' && receiverPartner.mdn_url) {
+        headers['Receipt-Delivery-Option'] = receiverPartner.mdn_url;
+      }
+    }
+
+    const micalg = receiverPartner.signature_algorithm === 'SHA-1' ? 'sha1' : 'sha-256';
+    const boundary = `----=_Part_${crypto.randomBytes(16).toString('hex')}`;
+
+    if (receiverPartner.encrypt_outbound) {
+        headers['Content-Type'] = 'application/pkcs7-mime; smime-type=enveloped-data; name="smime.p7m"';
+        headers['Content-Transfer-Encoding'] = 'binary';
+        headers['Content-Disposition'] = 'attachment; filename="smime.p7m"';
+    } else if (receiverPartner.sign_outbound) {
+        headers['Content-Type'] = `multipart/signed; protocol="application/pkcs7-signature"; micalg="${micalg}"; boundary="${boundary}"`;
+    } else {
+        headers['Content-Type'] = 'application/xml';
+    }
+
     const options = {
       method: 'POST',
-      headers: {
-        'AS2-From': senderAs2Id,
-        'AS2-To': receiverAs2Id,
-        'AS2-Version': '1.2',
-        'Message-ID': messageId,
-        'Content-Type': 'application/pkcs7-mime; smime-type=enveloped-data; name="smime.p7m"',
-        'Disposition-Notification-To': `http://our-gateway.com/as2/receive-mdn`,
-        'Receipt-Delivery-Option': `http://our-gateway.com/as2/receive-mdn`
-      }
+      headers: headers,
+      timeout: (receiverPartner.connection_timeout || 60) * 1000,
     };
 
     const reqModule = parsedUrl.protocol === 'https:' ? https : http;
 
-    return new Promise((resolve, reject) => {
+    return new Promise(async (resolve, reject) => {
       const req = reqModule.request(parsedUrl, options, (res) => {
         let responseData = '';
         res.on('data', (chunk) => responseData += chunk);
         res.on('end', () => {
-          this.logger.log(`Outbound HTTP Status: ${res.statusCode}`);
+          this.logger.log(`Outbound HTTP Status: ${res.statusCode} from ${receiverPartner.url}`);
           if (res.statusCode >= 200 && res.statusCode < 300) {
             resolve();
           } else {
-            reject(new Error(`HTTP request failed with status ${res.statusCode}`));
+            reject(new Error(`HTTP request failed with status ${res.statusCode}: ${responseData}`));
           }
         });
       });
 
       req.on('error', (e) => reject(e));
 
-      // Build the Crypto Pipeline
-      this.buildCryptoPipeline(
-        readStream,
-        passThroughToHttp,
-        privateKeyPem,
-        certificatePem,
-        receiverCertPem
-      ).catch(reject);
+      try {
+        const readStream = this.storageService.createReadStream(filename);
+        const passThroughToHttp = new PassThrough();
+        const transforms: any[] = [readStream];
 
-      // Pipe the final output to the HTTP request
-      passThroughToHttp.pipe(req);
+        if (receiverPartner.sign_outbound) {
+          this.logger.log(`Applying Signature: ${receiverPartner.signature_algorithm}`);
+          // If encrypting, the MIME header needs to be added by the stream itself
+          const prependMime = receiverPartner.encrypt_outbound ? true : false;
+          transforms.push(await this.cryptoService.createSignStream(
+            senderStation.private_key_pem, 
+            senderStation.pem_data, 
+            receiverPartner.signature_algorithm,
+            boundary,
+            prependMime
+          ));
+        }
+
+        if (receiverPartner.encrypt_outbound) {
+          this.logger.log(`Applying Encryption: ${receiverPartner.encryption_algorithm}`);
+          transforms.push(await this.cryptoService.createEncryptStream(
+             encryptionCertPem, 
+             receiverPartner.encryption_algorithm,
+             receiverPartner.sign_outbound
+          ));
+        }
+
+        transforms.push(passThroughToHttp);
+
+        pipeline(transforms as any).catch(err => {
+          this.logger.error('Streaming pipeline failed', err);
+          req.destroy(err);
+        });
+
+        passThroughToHttp.pipe(req);
+
+      } catch (err) {
+        this.logger.error('Failed to initialize outbound pipeline', err);
+        req.destroy(err);
+        reject(err);
+      }
     });
-  }
-
-  private async buildCryptoPipeline(
-    readStream: NodeJS.ReadableStream,
-    writeStream: NodeJS.WritableStream,
-    privateKeyPem: string,
-    certificatePem: string,
-    receiverCertPem: string
-  ) {
-    try {
-      const compressStream = this.cryptoService.createCompressStream();
-      const signStream = await this.cryptoService.createSignStream(privateKeyPem, certificatePem);
-      const encryptStream = await this.cryptoService.createEncryptStream(receiverCertPem);
-
-      // $O(1)$ memory pipeline
-      await pipeline(
-        readStream,
-        compressStream,
-        signStream,
-        encryptStream,
-        writeStream
-      );
-      this.logger.log('Outbound Crypto Pipeline completed. Data piped to HTTP.');
-    } catch (err) {
-      this.logger.error('Outbound Pipeline Error', err);
-      throw err;
-    }
   }
 }
