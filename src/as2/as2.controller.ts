@@ -27,6 +27,35 @@ export class As2Controller {
     private readonly as2OutboundService: As2OutboundService
   ) { }
 
+
+  /**
+   * CREATE NEW PARTNER (POST)
+   */
+  @Post('partners')
+  async createPartnerConfiguration(@Req() req: Request) {
+    this.logger.log(`Received request to create a new trading partner.`);
+    try {
+      const body = req.body;
+      const partnerRepository = this.partnerService['partnerRepository'];
+
+      // Clean payload
+      const cleanPayload = { ...body };
+      delete cleanPayload.isNew; // Remove the UI flag
+
+      // Create and save the new record to the database
+      const newPartner = partnerRepository.create(cleanPayload);
+      const savedPartner = await partnerRepository.save(newPartner);
+
+      return { 
+        success: true, 
+        message: 'New trading partner created successfully.', 
+        data: savedPartner 
+      };
+    } catch (error) {
+      this.logger.error(`Failed to create trading partner: ${error.message}`);
+      throw new BadRequestException(`Creation failed: ${error.message}`);
+    }
+  }
   /**
    * DYNAMIC PARTNER CONFIGURATION UPDATE (PUT)
    * Completely bypasses NestJS/TypeORM caching using Raw SQL to guarantee all fields are saved.
@@ -100,6 +129,32 @@ export class As2Controller {
     } catch (error) {
       this.logger.error(`Failed to update trading partner configuration: ${error.message}`);
       throw new BadRequestException(`Database sync failed: ${error.message}`);
+    }
+  }
+
+  /**
+   * FETCH TRANSACTION HISTORY FOR A PARTNER
+   */
+  @Get('transactions/:as2_id')
+  async getPartnerTransactions(@Param('as2_id') as2Id: string, @Req() req: Request) {
+    try {
+      const transactionRepository = this.as2Service['transactionService']['transactionRepository'];
+      
+      // Fetch all transactions where this partner is either the sender or receiver
+      // Ordered by newest first
+      const transactions = await transactionRepository.find({
+        where: [
+          { sender_as2_id: as2Id },
+          { receiver_as2_id: as2Id }
+        ],
+        order: { created_at: 'DESC' },
+        take: 50 // Limit to last 50 for performance
+      });
+
+      return { success: true, data: transactions };
+    } catch (error) {
+      this.logger.error(`Failed to fetch transactions for ${as2Id}: ${error.message}`);
+      throw new BadRequestException('Failed to load transaction history');
     }
   }
 

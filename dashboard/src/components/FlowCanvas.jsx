@@ -1,147 +1,172 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import ReactFlow, { Controls, Background, useNodesState, useEdgesState, addEdge, MarkerType } from 'reactflow';
+import React, { useState, useEffect } from 'react';
 import AdvancedSettingsDrawer from './AdvancedSettingsDrawer';
-import 'reactflow/dist/style.css';
 
-const initialNodes = [
-  {
-    id: '1',
-    position: { x: 50, y: 50 },
-    data: { 
-      label: (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
-          <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginBottom: '8px', borderBottom: '1px solid #e2e8f0', paddingBottom: '4px', width: '100%' }}>
-            <span style={{ color: '#2563eb', fontWeight: 'bold' }}>* AS2</span>
-            <span style={{ fontSize: '12px' }}>dev1021-async</span>
-          </div>
-          <div style={{ fontSize: '11px', color: '#64748b' }}>Receive files from:</div>
-          <div style={{ fontSize: '11px', fontWeight: 500 }}>test</div>
-          <a href="#" style={{ fontSize: '11px', color: '#2563eb', textDecoration: 'none', marginTop: '4px' }}>→ Go to Send Action</a>
-        </div>
-      ) 
-    },
-    style: { width: 250, background: 'white', border: '1px solid #cbd5e1', borderRadius: '4px', padding: '12px', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }
-  },
-  {
-    id: '2',
-    position: { x: 400, y: 50 },
-    data: { 
-      label: (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
-          <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginBottom: '8px', borderBottom: '1px solid #e2e8f0', paddingBottom: '4px', width: '100%' }}>
-            <span style={{ color: '#2563eb', fontWeight: 'bold' }}>&gt; AS2</span>
-            <span style={{ fontSize: '12px' }}>dev1021-sync</span>
-          </div>
-          <div style={{ fontSize: '11px', color: '#64748b' }}>Send files to:</div>
-          <div style={{ fontSize: '11px', fontWeight: 500 }}>veeva_vault</div>
-          <a href="#" style={{ fontSize: '11px', color: '#2563eb', textDecoration: 'none', marginTop: '4px' }}>→ Go to Receive Action</a>
-        </div>
-      ) 
-    },
-    style: { width: 250, background: 'white', border: '1px solid #cbd5e1', borderRadius: '4px', padding: '12px', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }
-  },
-  {
-    id: '3',
-    position: { x: 750, y: 100 },
-    data: { 
-      label: (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 8px' }}>
-          <div style={{ width: '16px', height: '16px', borderRadius: '50%', background: '#2563eb', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px' }}>✓</div>
-          <span style={{ fontWeight: 600 }}>Flow End</span>
-        </div>
-      )
-    },
-    style: { background: 'white', border: '1px solid #cbd5e1', borderRadius: '24px', padding: '4px' }
-  }
-];
-
-const initialEdges = [
-  { id: 'e1-2', source: '1', target: '2', type: 'smoothstep', animated: true, style: { stroke: '#94a3b8', strokeWidth: 2 } },
-  { id: 'e2-3', source: '2', target: '3', type: 'smoothstep', markerEnd: { type: MarkerType.ArrowClosed, color: '#94a3b8' }, style: { stroke: '#94a3b8', strokeWidth: 2 } },
-];
-
-const FlowCanvas = () => {
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+const ConnectorHub = () => {
+  const [connectors, setConnectors] = useState([]);
   const [selectedPartner, setSelectedPartner] = useState(null);
-  const [liveDbPartner, setLiveDbPartner] = useState(null);
+  const [searchTerm, setSearchTerm] = useState('');
 
-  const onConnect = useCallback((params) => setEdges((eds) => addEdge(params, eds)), [setEdges]);
-
-  // DYNAMIC ALIGNMENT PASSAGE: Fetch records directly from active DB state on load
+  // Fetch existing partners on load
   useEffect(() => {
     fetch('http://localhost:8080/api/partners')
       .then((res) => res.json())
       .then((data) => {
-        // Look for the specific profile record matching our target connection ID
-        const veevaRecord = data.find((p) => p.as2_id === 'connectionvault1021');
-        if (veevaRecord) {
-          setLiveDbPartner(veevaRecord);
+        if (data && data.length > 0) {
+          setConnectors(data);
+        } else {
+          // Fallback mock data if DB is empty for UI testing
+          setConnectors([
+            {
+              id: 'local-1',
+              name: 'dev1021-async (Local)',
+              as2_id: 'test',
+              url: 'http://localhost:8080/as2/receive',
+              direction: 'Inbound',
+            },
+            {
+              id: 'connectionvault1021',
+              name: 'Veeva Vault Safety',
+              as2_id: 'connectionvault1021',
+              url: 'https://connectionvault1021.gateway.dev.veevavaultsafety.com/api/v1/inbound/transmission',
+              direction: 'Outbound',
+            }
+          ]);
         }
       })
-      .catch((err) => console.error('Failed to sync canvas view with database context', err));
+      .catch((err) => console.error('Failed to fetch connectors', err));
   }, []);
 
-  const onNodeClick = (event, node) => {
-    if (node.id === '2') {
-      if (liveDbPartner) {
-        // If database data exists, load it directly into the drawer context
-        setSelectedPartner(liveDbPartner);
-      } else {
-        // Fallback default state if database lookup hasn't resolved yet
-        setSelectedPartner({ 
-          id: 'connectionvault1021',
-          name: 'dev1021-async', 
-          as2_id: 'connectionvault1021', 
-          url: 'https://connectionvault1021.gateway.dev.veevavaultsafety.com/api/v1/inbound/transmission',
-          sign_outbound: true,
-          encrypt_outbound: true,
-          encryption_algorithm: '3DES',
-          request_mdn: true,
-          mdn_delivery_mode: 'SYNC'
-        });
-      }
-    } else {
-      setSelectedPartner({ id: 'dev1021-async', name: 'test_partner', as2_id: 'dev1021-async', url: 'https://test.com/as2' });
+  const handleAddConnector = () => {
+    // Pass a blank template to the drawer to create a new partner
+    setSelectedPartner({
+      isNew: true,
+      name: '',
+      as2_id: '',
+      url: '',
+      sign_outbound: true,
+      encrypt_outbound: true,
+      encryption_algorithm: '3DES',
+      request_mdn: true,
+      mdn_delivery_mode: 'SYNC'
+    });
+  };
+
+  const handleDelete = (id, e) => {
+    e.stopPropagation(); // Prevent opening the drawer when clicking delete
+    const confirmDelete = window.confirm('Are you sure you want to remove this AS2 connector?');
+    if (confirmDelete) {
+      // Optimistic UI update (You would also make a DELETE API call here)
+      setConnectors(connectors.filter(c => c.id !== id));
     }
   };
 
+  const filteredConnectors = connectors.filter(c => 
+    c.name?.toLowerCase().includes(searchTerm.toLowerCase()) || 
+    c.as2_id?.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
   return (
-    <div style={{ display: 'flex', width: '100%', height: '100%' }}>
-      <div style={{ flex: 1, position: 'relative' }}>
-        <div className="top-toolbar" style={{ display: 'flex', padding: '10px', background: 'white', borderBottom: '1px solid #cbd5e1', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
-            <select className="form-select" style={{ width: '180px', padding: '6px' }}>
-              <option>Flows / Default</option>
-            </select>
-          </div>
+    <div style={{ display: 'flex', width: '100%', height: '100%', backgroundColor: '#f8fafc', fontFamily: 'system-ui, sans-serif' }}>
+      
+      {/* Main Content Area */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '24px', overflowY: 'auto' }}>
+        
+        {/* Header & Toolbar */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
           <div>
-            <input type="text" placeholder="Search Connectors..." className="form-input" style={{ width: '350px', background: '#f8fafc', padding: '6px 12px', border: '1px solid #cbd5e1', borderRadius: '4px' }} />
+            <h1 style={{ margin: 0, fontSize: '24px', color: '#0f172a' }}>AS2 Connectors</h1>
+            <p style={{ margin: '4px 0 0 0', color: '#64748b', fontSize: '14px' }}>Manage your inbound and outbound trading partners.</p>
+          </div>
+          <div style={{ display: 'flex', gap: '16px' }}>
+            <input 
+              type="text" 
+              placeholder="Search ID or Name..." 
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              style={{ width: '250px', padding: '8px 16px', border: '1px solid #cbd5e1', borderRadius: '6px', outline: 'none' }} 
+            />
+            <button 
+              onClick={handleAddConnector}
+              style={{ padding: '8px 16px', backgroundColor: '#2563eb', color: 'white', border: 'none', borderRadius: '6px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
+            >
+              <span style={{ fontSize: '18px', lineHeight: 1 }}>+</span> New Connector
+            </button>
           </div>
         </div>
-        
-        <div style={{ height: 'calc(100% - 56px)', width: '100%' }}>
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            onNodeClick={onNodeClick}
-            fitView
-            attributionPosition="bottom-left"
-          >
-            <Controls />
-            <Background color="#cbd5e1" gap={16} />
-          </ReactFlow>
+
+        {/* Connector Grid */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '20px' }}>
+          {filteredConnectors.map((connector) => (
+            <div 
+              key={connector.id} 
+              onClick={() => setSelectedPartner(connector)}
+              style={{ 
+                backgroundColor: 'white', 
+                border: '1px solid #e2e8f0', 
+                borderRadius: '8px', 
+                padding: '20px', 
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+                display: 'flex',
+                flexDirection: 'column',
+                position: 'relative'
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.boxShadow = '0 4px 6px rgba(0,0,0,0.1)'}
+              onMouseLeave={(e) => e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.05)'}
+            >
+              {/* Delete Button (Top Right) */}
+              <button 
+                onClick={(e) => handleDelete(connector.id, e)}
+                style={{ position: 'absolute', top: '16px', right: '16px', background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '4px' }}
+                title="Remove Connector"
+              >
+                ✕
+              </button>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+                <span style={{ width: '8px', height: '8px', backgroundColor: '#10b981', borderRadius: '50%' }}></span>
+                <span style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  AS2 Protocol
+                </span>
+              </div>
+              
+              <h3 style={{ margin: '0 0 4px 0', fontSize: '18px', color: '#1e293b', paddingRight: '20px' }}>
+                {connector.name || 'Unnamed Partner'}
+              </h3>
+              <p style={{ margin: '0 0 16px 0', fontSize: '13px', color: '#64748b', fontFamily: 'monospace' }}>
+                ID: {connector.as2_id || 'Unknown'}
+              </p>
+
+              <div style={{ marginTop: 'auto', paddingTop: '16px', borderTop: '1px solid #f1f5f9' }}>
+                <div style={{ fontSize: '11px', color: '#94a3b8', marginBottom: '4px' }}>ENDPOINT URL</div>
+                <div style={{ fontSize: '12px', color: '#334155', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {connector.url || 'No URL configured'}
+                </div>
+              </div>
+            </div>
+          ))}
+
+          {filteredConnectors.length === 0 && (
+            <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '40px', color: '#64748b' }}>
+              No connectors found. Click "+ New Connector" to add one.
+            </div>
+          )}
         </div>
       </div>
       
+      {/* Settings Drawer Overlay */}
       {selectedPartner && (
-        <AdvancedSettingsDrawer partner={selectedPartner} onClose={() => setSelectedPartner(null)} />
+        <AdvancedSettingsDrawer 
+          partner={selectedPartner} 
+          onClose={() => {
+            setSelectedPartner(null);
+            // Optional: trigger a re-fetch here to ensure the grid updates after closing the drawer
+          }} 
+        />
       )}
     </div>
   );
 };
 
-export default FlowCanvas;
+export default ConnectorHub;
