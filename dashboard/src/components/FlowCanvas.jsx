@@ -51,12 +51,27 @@ const ConnectorHub = () => {
     });
   };
 
-  const handleDelete = (id, e) => {
+  const handleDelete = async (id, e) => {
     e.stopPropagation(); // Prevent opening the drawer when clicking delete
-    const confirmDelete = window.confirm('Are you sure you want to remove this AS2 connector?');
+    const confirmDelete = window.confirm('Are you sure you want to permanently remove this AS2 connector?');
+    
     if (confirmDelete) {
-      // Optimistic UI update (You would also make a DELETE API call here)
-      setConnectors(connectors.filter(c => c.id !== id));
+      try {
+        // 1. Tell the backend to delete the record from PostgreSQL
+        const response = await fetch(`http://localhost:8080/api/partners/${id}`, {
+          method: 'DELETE',
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to delete connector from database');
+        }
+
+        // 2. Only remove it from the UI once the database confirms it's gone
+        setConnectors(connectors.filter(c => c.id !== id));
+        
+      } catch (error) {
+        alert(`Error deleting connector: ${error.message}`);
+      }
     }
   };
 

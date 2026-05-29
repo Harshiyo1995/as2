@@ -63,7 +63,18 @@ const ProfilePage = () => {
           </div>
 
           <div style={styles.card}>
-            <div style={styles.cardHeader}><KeyRound size={18} color="#10b981" /><h3 style={styles.cardTitle}>Private Decryption Certificate</h3></div>
+            <div style={styles.cardHeader}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <KeyRound size={18} color="#10b981" />
+                <h3 style={styles.cardTitle}>Private Decryption Certificate</h3>
+              </div>
+              {/* NEW: Edit/Change Certificate Button */}
+              {localStation && (
+                <button onClick={() => setIsModalOpen(true)} style={{...styles.iconBtn, marginLeft: 'auto', color: '#2563eb'}} title="Change Certificate">
+                  <Edit2 size={16} /> <span style={{ fontSize: '12px', marginLeft: '4px', fontWeight: 600 }}>Change</span>
+                </button>
+              )}
+            </div>
             <div style={styles.cardBody}>
               {localStation ? (
                 <>
@@ -99,15 +110,17 @@ const ProfilePage = () => {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
           <div style={styles.card}>
             <div style={styles.cardHeader}>
-              <Globe size={18} color="#8b5cf6" />
-              <h3 style={styles.cardTitle}>Application URLs</h3>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Globe size={18} color="#8b5cf6" />
+                <h3 style={styles.cardTitle}>Application URLs</h3>
+              </div>
               {isEditingUrls ? (
                 <button onClick={handleSaveUrls} style={{...styles.iconBtn, color: '#10b981', marginLeft: 'auto'}} title="Save URLs">
-                  <Save size={16} />
+                  <Save size={16} /> <span style={{ fontSize: '12px', marginLeft: '4px', fontWeight: 600 }}>Save</span>
                 </button>
               ) : (
-                <button onClick={() => setIsEditingUrls(true)} style={{...styles.iconBtn, marginLeft: 'auto'}} title="Edit URLs">
-                  <Edit2 size={16} />
+                <button onClick={() => setIsEditingUrls(true)} style={{...styles.iconBtn, marginLeft: 'auto', color: '#2563eb'}} title="Edit URLs">
+                  <Edit2 size={16} /> <span style={{ fontSize: '12px', marginLeft: '4px', fontWeight: 600 }}>Edit</span>
                 </button>
               )}
             </div>
@@ -174,7 +187,6 @@ const AddStationModal = ({ onClose, onSuccess }) => {
 
     const reader = new FileReader();
     reader.onload = (evt) => {
-      // Strip the Data URL prefix to get raw base64
       const base64Data = evt.target.result.split(',')[1];
       setFormData(f => ({ ...f, pfx_base64: base64Data }));
     };
@@ -205,8 +217,8 @@ const AddStationModal = ({ onClose, onSuccess }) => {
       <div style={{...styles.modal, width: '560px', padding: 0}}>
         <div style={styles.modalHeader}>
           <div>
-            <h3 style={styles.modalTitle}>Register Local Station Identity</h3>
-            <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#64748b' }}>Upload your secure PKCS#12 vault (.pfx / .p12) to configure the gateway.</p>
+            <h3 style={styles.modalTitle}>Configure Local Identity</h3>
+            <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#64748b' }}>Upload your secure PKCS#12 vault (.pfx / .p12) to update the gateway.</p>
           </div>
           <button onClick={onClose} style={styles.closeBtn}><X size={18} /></button>
         </div>
@@ -250,7 +262,7 @@ const AddStationModal = ({ onClose, onSuccess }) => {
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '12px' }}>
             <button type="button" onClick={onClose} style={styles.btnSecondary}>Cancel</button>
             <button type="submit" style={styles.btnPrimary} disabled={loading || !formData.pfx_base64}>
-              {loading ? 'Decrypting Vault...' : 'Register Station'}
+              {loading ? 'Decrypting Vault...' : 'Save Identity'}
             </button>
           </div>
         </form>
@@ -265,7 +277,7 @@ const styles = {
   headerTitle: { fontSize: '20px', fontWeight: '700', color: '#0f172a', margin: 0 },
   grid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', alignItems: 'start' },
   card: { backgroundColor: '#ffffff', borderRadius: '8px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', overflow: 'hidden' },
-  cardHeader: { display: 'flex', alignItems: 'center', gap: '8px', padding: '16px 20px', borderBottom: '1px solid #e2e8f0', backgroundColor: '#fdfdfd' },
+  cardHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid #e2e8f0', backgroundColor: '#fdfdfd' },
   cardTitle: { fontSize: '14px', fontWeight: '700', color: '#1e293b', margin: 0 },
   cardBody: { padding: '20px' },
   label: { display: 'block', fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '6px' },
@@ -275,7 +287,7 @@ const styles = {
   copyBox: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '6px', padding: '8px 12px' },
   urlText: { fontSize: '12px', color: '#1d4ed8', fontFamily: 'monospace', fontWeight: '500' },
   copyBtn: { background: 'none', border: 'none', cursor: 'pointer', color: '#3b82f6', display: 'flex', alignItems: 'center' },
-  iconBtn: { background: 'none', border: 'none', cursor: 'pointer', color: '#64748b', display: 'flex', alignItems: 'center', padding: '4px' },
+  iconBtn: { background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: '4px', borderRadius: '4px', transition: 'background 0.2s' },
   btnPrimary: { display: 'inline-flex', gap: '6px', alignItems: 'center', backgroundColor: '#2563eb', color: '#ffffff', padding: '8px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: '600', cursor: 'pointer', border: 'none' },
   btnSecondary: { display: 'inline-flex', gap: '6px', alignItems: 'center', backgroundColor: '#ffffff', border: '1px solid #e2e8f0', color: '#334155', padding: '8px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: '600', cursor: 'pointer' },
   backdrop: { position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(15, 23, 42, 0.4)', backdropFilter: 'blur(4px)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 99999 },
@@ -284,8 +296,7 @@ const styles = {
   modalTitle: { fontSize: '18px', fontWeight: '700', color: '#0f172a', margin: 0 },
   closeBtn: { background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8' },
   formLabel: { display: 'block', fontSize: '12px', fontWeight: 600, color: '#1e293b', marginBottom: '6px' },
-  formInput: { width: '100%', padding: '10px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px', outline: 'none' },
-  textArea: { width: '100%', padding: '10px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '11px', fontFamily: 'monospace', resize: 'vertical' }
+  formInput: { width: '100%', padding: '10px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px', outline: 'none' }
 };
 
 export default ProfilePage;

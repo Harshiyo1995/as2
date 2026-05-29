@@ -106,6 +106,7 @@ class ForgeSignTransform extends Transform {
 class ForgeVerifyTransform extends Transform {
   private chunks: Buffer[] = [];
   public micContent: Buffer | null = null; 
+  public originalFilename: string | null = null; // ─── THE CRYPTO FIX: Extract original filename ───
   
   constructor(private readonly logger: Logger) { super(); }
 
@@ -184,7 +185,7 @@ class ForgeVerifyTransform extends Transform {
             if (decompressedBuffer) {
               currentData = Buffer.from(decompressedBuffer);
               this.logger.debug('Successfully decompressed CMS payload into signed text.');
-              continue; // Restart loop to strip the newly exposed signature!
+              continue;
             } else {
               this.logger.warn('Failed to inflate ZLIB payload. Halting loop to prevent crash.');
               if (!this.micContent) this.micContent = currentData;
@@ -212,7 +213,6 @@ class ForgeVerifyTransform extends Transform {
             if (nextBoundaryIdx !== -1) {
               let actualEnd = nextBoundaryIdx;
               
-              // ─── THE RFC 2046 FIX: Backtrack the CRLF that belongs to the boundary ───
               if (actualEnd > contentStart && currentData[actualEnd - 1] === 10) {
                 actualEnd--;
                 if (actualEnd > contentStart && currentData[actualEnd - 1] === 13) {
@@ -221,30 +221,31 @@ class ForgeVerifyTransform extends Transform {
               }
               
               let exactBytes = currentData.slice(contentStart, actualEnd);
-              
-              // ─── THE PRISTINE MIC HASH ───
-              // Because the bytes were sealed in a zip file, they are safe from mutation.
-              // We hash the exact binary slice. No regex replacements!
               if (!this.micContent) {
                  this.micContent = exactBytes;
               }
 
-              // Strip the MIME headers so the database gets pure XML
               let headerEnd = exactBytes.indexOf(Buffer.from('\r\n\r\n', 'utf8'));
               if (headerEnd === -1) headerEnd = exactBytes.indexOf(Buffer.from('\n\n', 'utf8'));
               
               if (headerEnd !== -1) {
-                let headersStr = exactBytes.slice(0, headerEnd).toString('utf8').toLowerCase();
-                let xmlContent = exactBytes.slice(headerEnd + (headersStr.includes('\r\n') ? 4 : 2));
+                let headersStr = exactBytes.slice(0, headerEnd).toString('utf8');
                 
-                if (headersStr.includes('base64')) {
+                // ─── EXTRACT ORIGINAL FILENAME ───
+                let filenameMatch = headersStr.match(/filename\s*=\s*["']?([^"';\r\n]+)["']?/i);
+                if (filenameMatch) this.originalFilename = filenameMatch[1];
+                
+                let headersLower = headersStr.toLowerCase();
+                let xmlContent = exactBytes.slice(headerEnd + (headersLower.includes('\r\n') ? 4 : 2));
+                
+                if (headersLower.includes('base64')) {
                   xmlContent = Buffer.from(xmlContent.toString('utf8').replace(/\s+/g, ''), 'base64');
                 }
                 currentData = xmlContent;
               } else {
                 currentData = exactBytes;
               }
-              continue; // Restart the loop just in case there's another layer!
+              continue; 
             }
           }
           break;
@@ -258,6 +259,11 @@ class ForgeVerifyTransform extends Transform {
           
           if (headerEnd !== -1) {
             let mimeHeaders = currentData.slice(0, headerEnd).toString('utf8');
+            
+            // ─── EXTRACT ORIGINAL FILENAME ───
+            let filenameMatch = mimeHeaders.match(/filename\s*=\s*["']?([^"';\r\n]+)["']?/i);
+            if (filenameMatch) this.originalFilename = filenameMatch[1];
+
             let bodyBytes = currentData.slice(headerEnd + (mimeHeaders.includes('\r\n') ? 4 : 2));
             if (mimeHeaders.toLowerCase().includes('base64')) {
               bodyBytes = Buffer.from(bodyBytes.toString('utf8').replace(/\s+/g, ''), 'base64');
@@ -282,14 +288,12 @@ class ForgeVerifyTransform extends Transform {
           break;
         }
 
-        // 4. FALLBACK: Pure Unsigned/Uncompressed XML
         if (!this.micContent) {
            this.micContent = currentData;
         }
         break;
       }
 
-      // Trim trailing empty space for the database to keep the XML clean
       if (currentData.length >= 2 && currentData[currentData.length - 2] === 13 && currentData[currentData.length - 1] === 10) {
         currentData = currentData.slice(0, currentData.length - 2);
       }

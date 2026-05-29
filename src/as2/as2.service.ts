@@ -96,9 +96,6 @@ export class As2Service {
     let computedMic = '';
 
     try {
-      // ─── THE PIPELINE FIX ───
-      // We pass the stream through VerifyStream so it can strip the signature away,
-      // allowing us to calculate the hash strictly on the pure XML bytes!
       await pipeline(
         cryptoFork,
         decryptStream,
@@ -106,7 +103,6 @@ export class As2Service {
         decryptedWriteStream
       );
 
-      // ─── THE FINAL MIC FIX ───
       const hashStream = crypto.createHash('sha256');
       if (verifyStream.micContent) {
          hashStream.update(verifyStream.micContent);
@@ -118,7 +114,17 @@ export class As2Service {
       computedMic = `${micDigest}, sha256`;
       this.logger.log(`Decryption complete. Generated Canonicalized MIC: ${computedMic}`);
 
-      await this.transactionService.updateStatus(messageId, TransactionStatus.COMPLETED);
+      // ─── THE INBOUND FIX: UPDATE DB WITH REAL FILENAME ───
+      const finalCleanName = verifyStream.originalFilename || `inbound_${safeMessageId}.xml`;
+
+      const transactionRepository = this.transactionService['transactionRepository'];
+      await transactionRepository.update(
+        { message_id: messageId },
+        { 
+          status: TransactionStatus.COMPLETED,
+          raw_file_path: finalCleanName
+        }
+      );
 
       const absoluteDecryptedPath = `${this.storageService['storageBasePath']}/${decryptedFilename}`;
 
@@ -183,10 +189,9 @@ export class As2Service {
 
         try {
           const transactionRepository = this.transactionService['transactionRepository'];
-          const activeRecord = await transactionRepository.findOne({ where: { raw_file_path: rawFilename } });
-          const activeMessageId = activeRecord ? activeRecord.message_id : messageId;
+          const activeRecord = await transactionRepository.findOne({ where: { message_id: messageId } });
 
-          await this.transactionService.updateMdnStatus(activeMessageId, MdnStatus.PROCESSED);
+          await this.transactionService.updateMdnStatus(messageId, MdnStatus.PROCESSED);
 
           await transactionRepository.createQueryBuilder()
             .update()
@@ -195,7 +200,7 @@ export class As2Service {
               raw_mdn_content: syncMdnResponse.body,
               nrr_validated_at: new Date()
             })
-            .where("raw_file_path = :path", { path: rawFilename })
+            .where("message_id = :msgId", { msgId: messageId })
             .execute();
 
           this.logger.log(`🔒 Transaction ledger columns and MDN status synchronized perfectly.`);

@@ -166,8 +166,9 @@ export class As2Controller {
     storage: diskStorage({
       destination: './data_storage',
       filename: (req, file, cb) => {
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-        cb(null, `outbound-${uniqueSuffix}${extname(file.originalname)}`);
+        // ─── THE OUTBOUND FIX: PRESERVE EXACT ORIGINAL FILENAME ───
+        const safeName = file.originalname.replace(/[^a-zA-Z0-9.\-_]/g, '_');
+        cb(null, safeName);
       }
     })
   }))
@@ -237,7 +238,6 @@ export class As2Controller {
          const boundaryMatch = existingTx.raw_mdn_content.match(/----=_Part_[^\n\r]+/);
          const boundary = boundaryMatch ? boundaryMatch[0].trim().replace('--', '') : `----=_Part_${Date.now()}`;
          
-         // ─── CRITICAL FIX: PROPER HEADERS ON DUPLICATE RETRY ───
          if (isSigned) {
              res.setHeader('Content-Type', `multipart/signed; protocol="application/pkcs7-signature"; micalg="sha-256"; boundary="${boundary}"`);
          } else {
@@ -269,7 +269,6 @@ export class As2Controller {
         for (const [key, value] of Object.entries(syncMdn.headers)) {
           res.setHeader(key, value as string);
         }
-        // ─── CRITICAL FIX: Send as a pure Buffer to bypass Express String Mutators ───
         return res.status(HttpStatus.OK).send(Buffer.from(syncMdn.body, 'utf8'));
       }
 
